@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f3ed">
+  <title>Taskline</title>
+  <meta name="description" content="A calm, focused checklist.">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="/" aria-label="Taskline home"><span>✓</span> Taskline</a>
+    <button id="language-toggle" class="header-action" type="button" aria-label="Change language">العربية</button>
+  </header>
+
+  <main class="shell">
+    <header class="page-heading">
+      <div class="heading-topline date-only">
+        <button id="month-picker" class="month-picker" type="button"><span id="month-label">July 2026</span> <span aria-hidden="true">⌄</span></button>
+        <input id="date-picker" class="date-picker" type="date" aria-label="Choose a date">
+        <button id="today-button" class="today-button" type="button" hidden>Today</button>
+      </div>
+      <h1 id="day-title">Today</h1>
+      <p class="intro">Write it down, then get it done.</p>
+    </header>
+
+    <nav class="week-nav date-only" aria-label="Choose a day">
+      <button id="previous-day" class="day-arrow" type="button" aria-label="Previous day">‹</button>
+      <div id="week-strip" class="week-strip"></div>
+      <button id="next-day" class="day-arrow" type="button" aria-label="Next day">›</button>
+    </nav>
+
+    <nav class="inbox-advanced-nav" aria-label="Inbox sections">
+      <button id="inbox-tab" class="active" type="button">Inbox</button>
+      <button id="dreams-tab" type="button">Dreams</button>
+      <button id="history-tab" type="button">Planned</button>
+    </nav>
+
+    <div class="inbox-planning inbox-task-only">
+      <label for="planning-kind">Plan for</label>
+      <select id="planning-year" aria-label="Year"><option value="">-</option></select>
+      <select id="planning-quarter" aria-label="Quarter"><option value="">-</option><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select>
+      <select id="planning-month" aria-label="Month"><option value="">-</option></select>
+    </div>
+
+    <form id="task-form" class="composer task-workspace" autocomplete="off">
+      <label class="sr-only" for="task-input">What needs doing?</label>
+      <div class="input-row">
+        <input id="task-input" name="task" maxlength="280" placeholder="Add a task…" required autofocus>
+        <button class="add-button" type="submit" aria-label="Add task"><span aria-hidden="true">＋</span><span class="add-label">Add</span></button>
+      </div>
+      <p id="form-error" class="error" role="alert"></p>
+    </form>
+
+    <section class="tasks-section task-workspace" aria-labelledby="tasks-heading">
+      <div class="section-heading">
+        <h2 id="tasks-heading">Your list</h2>
+        <div class="list-tools">
+          <select id="label-filter" class="label-filter" aria-label="Filter by label" hidden><option value="">All labels</option></select>
+          <span id="task-count">0 tasks left</span>
+        </div>
+      </div>
+      <div id="empty-state" class="empty-state">
+        <div class="empty-mark" aria-hidden="true">✓</div>
+        <p>Your list is clear.</p>
+        <span>Add your first task above.</span>
+      </div>
+      <ol id="task-list" aria-live="polite"></ol>
+      <p id="drag-hint" class="drag-hint" hidden>Hold and drag a task to reorder it.</p>
+    </section>
+
+    <section id="dreams-section" class="advanced-section">
+      <form id="dream-form" class="advanced-composer">
+        <div><h2>Dreams</h2><p>Capture a dream now; add details only when you want.</p></div>
+        <input id="dream-title" maxlength="280" placeholder="A dream…" required>
+        <select id="dream-year" aria-label="Expected year"><option value="">-</option></select>
+        <button type="submit">Add dream</button>
+      </form>
+      <div id="dream-list" class="dream-list"></div>
+    </section>
+
+    <section id="history-section" class="advanced-section">
+      <div class="history-heading"><div><h2>Planned</h2><p>See everything planned for the selected period.</p></div>
+        <select id="history-period"><option value="week">This week</option><option value="month">This month</option><option value="quarter">This quarter</option><option value="tertial">This tertial</option><option value="year">This year</option></select>
+      </div>
+      <p id="history-range" class="history-range"></p>
+      <div id="history-list" class="history-list"></div>
+      <details id="done-section" class="done-section"><summary>Done ✅ <span id="done-count"></span></summary><div id="done-list" class="history-list"></div></details>
+    </section>
+
+    <section id="overdue-section" class="overdue-section" aria-labelledby="overdue-heading" hidden>
+      <div class="section-heading">
+        <h2 id="overdue-heading">Overdue</h2>
+        <span id="overdue-count"></span>
+      </div>
+      <ul id="overdue-list" class="overdue-list"></ul>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Main navigation">
+    <button id="nav-today" type="button" class="active" aria-current="page"><span aria-hidden="true">☑</span>Today</button>
+    <button id="nav-inbox" type="button"><span aria-hidden="true">📥</span>Inbox</button>
+    <button type="button" aria-disabled="true"><span aria-hidden="true">⚙</span>Settings</button>
+  </nav>
+  <dialog id="label-dialog" class="label-dialog">
+    <form id="label-form" method="dialog">
+      <div class="dialog-heading">
+        <div><small>Organize task</small><h2>Add a label</h2></div>
+        <button type="button" class="dialog-close" aria-label="Close">×</button>
+      </div>
+      <label for="label-name">Label name</label>
+      <input id="label-name" maxlength="40" placeholder="Home, Car, Work…">
+      <fieldset>
+        <legend>Color</legend>
+        <div class="color-options">
+          <label><input type="radio" name="label-color" value="green" checked><span class="green"></span></label>
+          <label><input type="radio" name="label-color" value="blue"><span class="blue"></span></label>
+          <label><input type="radio" name="label-color" value="orange"><span class="orange"></span></label>
+          <label><input type="radio" name="label-color" value="purple"><span class="purple"></span></label>
+          <label><input type="radio" name="label-color" value="red"><span class="red"></span></label>
+          <label><input type="radio" name="label-color" value="gray"><span class="gray"></span></label>
+        </div>
+      </fieldset>
+      <div class="dialog-actions">
+        <button id="remove-label" type="button">Remove label</button>
+        <button class="save-label" type="submit">Save label</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="edit-dialog" class="label-dialog edit-dialog">
+    <form id="edit-form" method="dialog">
+      <div class="dialog-heading">
+        <div><small>Edit task</small><h2>Task details</h2></div>
+        <button type="button" class="dialog-close edit-dialog-close" aria-label="Close">×</button>
+      </div>
+      <label for="edit-title">Task</label>
+      <input id="edit-title" maxlength="280" required>
+      <div class="edit-day-date"><label for="edit-date">Date</label><input id="edit-date" type="date"></div>
+      <div class="edit-inbox-plan" hidden><label>Planned</label><div class="planning-wheels"><select id="edit-plan-year"><option value="">-</option></select><select id="edit-plan-quarter"><option value="">-</option><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select><select id="edit-plan-month"><option value="">-</option></select></div></div>
+      <div class="dialog-actions"><button class="save-label" type="submit">Save changes</button></div>
+    </form>
+  </dialog>
+  <dialog id="dream-dialog" class="label-dialog dream-dialog">
+    <form id="dream-detail-form">
+      <div class="dialog-heading"><div><small>Dream details</small><h2 id="dream-dialog-title"></h2></div><button id="dream-dialog-close" type="button" class="dialog-close" aria-label="Close">×</button></div>
+      <details><summary>Add a description or vision</summary><textarea id="dream-description" rows="5" placeholder="Describe what this dream looks and feels like…"></textarea></details>
+      <details><summary>Add an image</summary><input id="dream-image" type="file" accept="image/png,image/jpeg,image/webp"><img id="dream-preview" alt="Dream image" hidden></details>
+      <details open><summary>Inner tasks</summary><div id="dream-items" class="dream-items"></div><div class="inner-task-add"><input id="dream-item-title" maxlength="280" placeholder="Add a small step…"><button id="add-dream-item" type="button">Add</button></div></details>
+      <div class="dialog-actions"><button class="save-label" type="submit">Save details</button></div>
+    </form>
+  </dialog>
+  <div id="announcer" class="sr-only" aria-live="assertive"></div>
+</body>
+</html>
