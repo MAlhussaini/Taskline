@@ -17,11 +17,16 @@ const overdueList = document.querySelector('#overdue-list');
 const overdueCount = document.querySelector('#overdue-count');
 const navToday = document.querySelector('#nav-today');
 const navInbox = document.querySelector('#nav-inbox');
+const navRoutines = document.querySelector('#nav-routines');
 const labelDialog = document.querySelector('#label-dialog');
 const labelForm = document.querySelector('#label-form');
 const labelName = document.querySelector('#label-name');
+const labelSuggestions = document.querySelector('#label-suggestions');
 const labelFilter = document.querySelector('#label-filter');
 const languageToggle = document.querySelector('#language-toggle');
+const workspaceToggle = document.querySelector('#workspace-toggle');
+const workspaceIndicator = document.querySelector('#workspace-indicator');
+const brandTitle = document.querySelector('#brand-title');
 const editDialog = document.querySelector('#edit-dialog');
 const editForm = document.querySelector('#edit-form');
 const editTitle = document.querySelector('#edit-title');
@@ -42,11 +47,34 @@ const dreamImage = document.querySelector('#dream-image');
 const dreamPreview = document.querySelector('#dream-preview');
 const dreamItems = document.querySelector('#dream-items');
 const historyPeriod = document.querySelector('#history-period');
+const routineForm = document.querySelector('#routine-form');
+const routineId = document.querySelector('#routine-id');
+const routineTitle = document.querySelector('#routine-title');
+const routineStart = document.querySelector('#routine-start');
+const routineFrequency = document.querySelector('#routine-frequency');
+const routineInterval = document.querySelector('#routine-interval');
+const routineWeekdays = document.querySelector('#routine-weekdays');
+const routineMonthDay = document.querySelector('#routine-month-day');
+const routineYearMonth = document.querySelector('#routine-year-month');
+const routineYearDay = document.querySelector('#routine-year-day');
+const routineEndMode = document.querySelector('#routine-end-mode');
+const routineEndValue = document.querySelector('#routine-end-value');
+const routineFollow = document.querySelector('#routine-follow');
+const routineSteps = document.querySelector('#routine-steps');
+const routineList = document.querySelector('#routine-list');
+const routineCancel = document.querySelector('#routine-cancel');
+const routineStats = document.querySelector('#routine-stats');
+const routineStatsToggle = document.querySelector('#routine-stats-toggle');
+const routineStatsPeriod = document.querySelector('#routine-stats-period');
+const routineStatsMetric = document.querySelector('#routine-stats-metric');
+const routineStatsFilter = document.querySelector('#routine-stats-filter');
+const routineChart = document.querySelector('#routine-chart');
 
 let tasks = [];
 let draggedId = null;
 let swipeStart = null;
 let activeDays = new Set();
+let completedDays = new Set();
 let currentView = 'day';
 let labelingTask = null;
 let editingTask = null;
@@ -54,12 +82,39 @@ let currentDream = null;
 let inboxSubView = 'inbox';
 let activeLabel = '';
 let language = localStorage.getItem('taskline-language') || 'en';
+let workspace = localStorage.getItem('taskline-workspace') === 'work' ? 'work' : 'personal';
 let dreams = [];
+let routines = [];
+let editingRoutine = null;
+let savedLabels = [];
 const copy = {
   en: { today:'Today', inbox:'Inbox', dreams:'Dreams', planned:'Planned', settings:'Settings', list:'Your list', add:'Add a task…', later:'Add something for later…', intro:'Write it down, then get it done.', inboxIntro:'A place for tasks you want to do later.', allLabels:'All labels', tasksLeft:'tasks left', taskLeft:'task left', overdue:'Overdue', language:'العربية', addButton:'Add', clear:'Your list is clear.', first:'Add your first task above.', drag:'Hold and drag a task to reorder it.', planFor:'Plan for', dreamTitle:'Dreams', dreamDesc:'Capture a dream now; add details only when you want.', dreamPlaceholder:'A dream…', addDream:'Add dream', plannedDesc:'See everything planned for the selected period.', done:'Done ✅', editTask:'Edit task', taskDetails:'Task details', task:'Task', date:'Date', saveChanges:'Save changes', addLabel:'Add a label', labelName:'Label name', color:'Color', removeLabel:'Remove label', saveLabel:'Save label', dreamDetails:'Dream details', description:'Add a description or vision', image:'Add an image', innerTasks:'Inner tasks', smallStep:'Add a small step…', saveDetails:'Save details', thisWeek:'This week', thisMonth:'This month', thisQuarter:'This quarter', thisTertial:'This tertial', thisYear:'This year' },
   ar: { today:'اليوم', inbox:'الحافظة', dreams:'الأحلام', planned:'المخطط', settings:'الإعدادات', list:'قائمتك', add:'أضف مهمة…', later:'أضف مهمة للمستقبل…', intro:'دوّنها، ثم أنجزها.', inboxIntro:'مكان للمهام التي تريد إنجازها لاحقًا.', allLabels:'كل الوسوم', tasksLeft:'مهام متبقية', taskLeft:'مهمة متبقية', overdue:'متأخرة', language:'English', addButton:'إضافة', clear:'قائمتك فارغة.', first:'أضف مهمتك الأولى أعلاه.', drag:'اضغط واسحب المهمة لإعادة ترتيبها.', planFor:'خطط لها', dreamTitle:'الأحلام', dreamDesc:'سجّل حلمًا الآن، وأضف التفاصيل عندما ترغب.', dreamPlaceholder:'حلم جديد…', addDream:'إضافة حلم', plannedDesc:'اعرض كل المهام المخطط لها في الفترة المختارة.', done:'مكتمل ✔️', editTask:'تعديل المهمة', taskDetails:'تفاصيل المهمة', task:'المهمة', date:'التاريخ', saveChanges:'حفظ التغييرات', addLabel:'إضافة وسم', labelName:'اسم الوسم', color:'اللون', removeLabel:'إزالة الوسم', saveLabel:'حفظ الوسم', dreamDetails:'تفاصيل الحلم', description:'إضافة شرح أو تصور', image:'إضافة صورة', innerTasks:'المهام الداخلية', smallStep:'أضف خطوة صغيرة…', saveDetails:'حفظ التفاصيل', thisWeek:'هذا الأسبوع', thisMonth:'هذا الشهر', thisQuarter:'هذا الربع', thisTertial:'هذا الثلث', thisYear:'هذه السنة' },
 };
 const t = key => copy[language][key];
+const routineCopy = {
+  en: { routines:'Routines', routineIntro:'Repeat what matters without losing yesterday’s history.', routineDesc:'Create repeating tasks and keep their history.', statistics:'Statistics', routine:'Routine', starts:'Starts', repeats:'Repeats', every:'Every', daily:'Daily', weekly:'Weekly', monthly:'Monthly', yearly:'Yearly', days:'Days of the week', dayOfMonth:'Day of month', month:'Month', day:'Day', ends:'Ends', never:'Never', onDate:'On a date', afterCount:'After occurrences', endDate:'End date', occurrences:'Number of occurrences', follow:'Follow until complete', followHelp:'Show unfinished occurrences in Overdue so they can be moved.', steps:'Subtasks (one per line)', create:'Create routine', update:'Update routine', cancel:'Cancel', allRoutines:'All routines', sevenDays:'7 days', thirtyDays:'30 days', oneYear:'1 year', percentage:'Completion percentage', completedCount:'Completed count', paused:'Paused', active:'Active', noRoutines:'No routines yet.', carried:'Carried from', routineBadge:'Routine', followBadge:'Follow-up', moveToday:'Move to today', toInbox:'To Inbox', ignore:'Ignore', editFollow:'Follow until complete', editFollowHelp:'Show this task in Overdue until you finish it.' },
+  ar: { routines:'الروتين', routineIntro:'كرّر ما يهمك مع الاحتفاظ بسجل الأيام السابقة.', routineDesc:'أنشئ مهام متكررة واحتفظ بسجلها.', statistics:'الإحصاءات', routine:'اسم الروتين', starts:'يبدأ في', repeats:'يتكرر', every:'كل', daily:'يومي', weekly:'أسبوعي', monthly:'شهري', yearly:'سنوي', days:'أيام الأسبوع', dayOfMonth:'يوم الشهر', month:'الشهر', day:'اليوم', ends:'ينتهي', never:'دون نهاية', onDate:'في تاريخ', afterCount:'بعد عدد من المرات', endDate:'تاريخ النهاية', occurrences:'عدد المرات', follow:'متابعة حتى الاكتمال', followHelp:'أظهر الموعد غير المنجز في قسم المتأخرة حتى يمكن نقله.', steps:'المهام الفرعية (مهمة في كل سطر)', create:'إنشاء روتين', update:'تحديث الروتين', cancel:'إلغاء', allRoutines:'كل الروتينات', sevenDays:'7 أيام', thirtyDays:'30 يومًا', oneYear:'سنة', percentage:'نسبة الإنجاز', completedCount:'عدد المهام المكتملة', paused:'متوقف مؤقتًا', active:'نشط', noRoutines:'لا توجد روتينات بعد.', carried:'مرحّلة من', routineBadge:'روتين', followBadge:'متابعة', moveToday:'نقل إلى اليوم', toInbox:'إلى الحافظة', ignore:'تجاهل', editFollow:'متابعة حتى الاكتمال', editFollowHelp:'أظهر هذه المهمة في قسم المتأخرة حتى تنجزها.' },
+};
+routineCopy.en.missed = 'Missed';
+routineCopy.ar.missed = 'فائتة';
+const rt = key => routineCopy[language][key];
+
+function applyWorkspace() {
+  const arabic = language === 'ar';
+  const isWork = workspace === 'work';
+  const currentName = isWork ? (arabic ? 'مساحة العمل' : 'Work space') : (arabic ? 'المساحة الشخصية' : 'Personal space');
+  const destinationName = isWork ? (arabic ? 'المساحة الشخصية' : 'Personal space') : (arabic ? 'مساحة العمل' : 'Work space');
+  workspaceIndicator.textContent = isWork ? '💼' : '🏡';
+  workspaceIndicator.setAttribute('aria-label', currentName);
+  workspaceIndicator.title = currentName;
+  workspaceToggle.textContent = isWork ? '🏡' : '💼';
+  workspaceToggle.setAttribute('aria-label', `${arabic ? 'انتقل إلى' : 'Switch to'} ${destinationName}`);
+  workspaceToggle.title = `${arabic ? 'انتقل إلى' : 'Switch to'} ${destinationName}`;
+  brandTitle.textContent = isWork ? (arabic ? 'Taskline عمل' : 'Taskline Work') : 'Taskline';
+  document.title = isWork ? `Taskline — ${arabic ? 'العمل' : 'Work'}` : 'Taskline';
+  document.body.classList.toggle('work-workspace', isWork);
+}
 
 function applyLanguage() {
   const arabic = language === 'ar';
@@ -68,6 +123,7 @@ function applyLanguage() {
   document.documentElement.dir = arabic ? 'rtl' : 'ltr';
   languageToggle.textContent = t('language');
   languageToggle.setAttribute('aria-label', arabic ? 'تغيير اللغة' : 'Change language');
+  applyWorkspace();
   document.querySelector('label[for="task-input"]').textContent = arabic ? 'ماذا تريد أن تنجز؟' : 'What needs doing?';
   form.querySelector('.add-button').setAttribute('aria-label', arabic ? 'إضافة مهمة' : 'Add task');
   document.querySelector('.bottom-nav').setAttribute('aria-label', arabic ? 'التنقل الرئيسي' : 'Main navigation');
@@ -82,7 +138,8 @@ function applyLanguage() {
   document.querySelector('#dream-year').setAttribute('aria-label', arabic ? 'السنة المتوقعة' : 'Expected year');
   navToday.lastChild.textContent = t('today');
   navInbox.lastChild.textContent = t('inbox');
-  document.querySelector('.bottom-nav button:last-child').lastChild.textContent = t('settings');
+  navRoutines.lastChild.textContent = rt('routines');
+  document.querySelector('#nav-settings').lastChild.textContent = t('settings');
   document.querySelector('#tasks-heading').textContent = t('list');
   document.querySelector('#overdue-heading').textContent = t('overdue');
   todayButton.textContent = t('today');
@@ -104,8 +161,9 @@ function applyLanguage() {
   document.querySelector('#done-section summary').firstChild.nodeValue = `${t('done')} `;
   document.querySelector('#label-dialog .dialog-heading h2').textContent = t('addLabel');
   document.querySelector('#label-dialog .dialog-heading small').textContent = arabic ? 'تنظيم المهمة' : 'Organize task';
-  document.querySelector('label[for="label-name"]').textContent = t('labelName');
-  labelName.placeholder = arabic ? 'منزل، سيارة، عمل…' : 'Home, Car, Work…';
+  document.querySelector('label[for="label-name"]').textContent = arabic ? 'اختر وسمًا محفوظًا أو أنشئ وسمًا جديدًا' : 'Choose a saved label or create a new one';
+  labelName.placeholder = arabic ? 'اكتب فقط لإنشاء وسم جديد…' : 'Type only to create a new label…';
+  labelSuggestions.setAttribute('aria-label', arabic ? 'الوسوم المحفوظة' : 'Saved labels');
   document.querySelector('#label-dialog legend').textContent = t('color');
   document.querySelector('#remove-label').textContent = t('removeLabel');
   document.querySelector('#label-form .save-label').textContent = t('saveLabel');
@@ -122,12 +180,43 @@ function applyLanguage() {
   document.querySelector('#dream-item-title').placeholder = t('smallStep');
   document.querySelector('#add-dream-item').textContent = t('addButton');
   document.querySelector('#dream-detail-form .save-label').textContent = t('saveDetails');
+  document.querySelector('#routine-heading').textContent = rt('routines');
+  document.querySelector('#routine-description').textContent = rt('routineDesc');
+  routineStatsToggle.querySelector('span').textContent = rt('statistics');
+  document.querySelector('#routine-title-label').textContent = rt('routine');
+  routineTitle.placeholder = arabic ? 'مثال: إخراج القمامة' : 'For example: Take out the trash';
+  document.querySelector('#routine-start-label').textContent = rt('starts');
+  document.querySelector('#routine-frequency-label').textContent = rt('repeats');
+  document.querySelector('#routine-interval-label').textContent = rt('every');
+  [...routineFrequency.options].forEach((option, index) => option.textContent = [rt('daily'), rt('weekly'), rt('monthly'), rt('yearly')][index]);
+  routineWeekdays.querySelector('legend').textContent = rt('days');
+  const weekdayNames = arabic ? ['أحد','اثن','ثلا','أرب','خمي','جمع','سبت'] : ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  routineWeekdays.querySelectorAll('label span').forEach((span, index) => { span.textContent = weekdayNames[index]; });
+  document.querySelector('#routine-monthly>span').textContent = rt('dayOfMonth');
+  document.querySelector('#routine-yearly label:first-child>span').textContent = rt('month');
+  document.querySelector('#routine-yearly label:last-child>span').textContent = rt('day');
+  document.querySelector('#routine-end-label').textContent = rt('ends');
+  [...routineEndMode.options].forEach((option, index) => option.textContent = [rt('never'), rt('onDate'), rt('afterCount')][index]);
+  document.querySelector('#routine-follow-title').textContent = rt('follow');
+  document.querySelector('#routine-follow-help').textContent = rt('followHelp');
+  document.querySelector('#routine-steps-label').textContent = rt('steps');
+  routineSteps.placeholder = arabic ? 'المهمة الفرعية الأولى\nالمهمة الفرعية الثانية' : 'First subtask\nSecond subtask';
+  routineCancel.textContent = rt('cancel');
+  document.querySelector('#routine-save').textContent = editingRoutine ? rt('update') : rt('create');
+  [...routineStatsPeriod.options].forEach((option, index) => option.textContent = [rt('sevenDays'), rt('thirtyDays'), rt('oneYear')][index]);
+  [...routineStatsMetric.options].forEach((option, index) => option.textContent = [rt('percentage'), rt('completedCount')][index]);
+  routineStatsPeriod.setAttribute('aria-label', arabic ? 'فترة الإحصاءات' : 'Statistics period');
+  routineStatsMetric.setAttribute('aria-label', arabic ? 'مقياس الإحصاءات' : 'Statistics metric');
+  routineStatsFilter.setAttribute('aria-label', arabic ? 'تصفية حسب الروتين' : 'Routine filter');
+  [...routineYearMonth.options].forEach((option, index) => { option.textContent = new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2026, index, 1)); });
+  routineMonthDay.options[routineMonthDay.options.length - 1].textContent = arabic ? 'آخر يوم' : 'Last day';
   [planningMonth, editPlanMonth].forEach(select => [...select.options].slice(1).forEach((option, index) => { option.textContent = new Intl.DateTimeFormat(locale, { month: 'short' }).format(new Date(2026, index, 1)); }));
-  renderCalendar(); render(); loadOverdue();
+  renderCalendar(); render(); renderLabelSuggestions(); loadOverdue();
+  if (currentView === 'routines') { renderRoutines(); if (!routineStats.hidden) loadRoutineStats(); }
   if (inboxSubView === 'dreams') loadDreams();
   if (inboxSubView === 'history') loadHistory();
 }
-const today = toISO(new Date());
+let today = toISO(new Date());
 let currentDate = today;
 
 function toISO(value) {
@@ -146,6 +235,15 @@ function shifted(value, days) {
   const result = fromISO(value);
   result.setDate(result.getDate() + days);
   return toISO(result);
+}
+
+function syncLocalToday() {
+  const nextToday = toISO(new Date());
+  if (nextToday === today) return false;
+  const wasShowingToday = currentDate === today;
+  today = nextToday;
+  if (wasShowingToday) currentDate = today;
+  return true;
 }
 
 function applyPlanningPreference() {
@@ -177,12 +275,21 @@ function planFromWheels(year, quarter, month) {
 
 function renderCalendar() {
   const locale = language === 'ar' ? 'ar' : 'en';
-  if (currentView === 'inbox') {
-    dayTitle.textContent = t('inbox');
-    document.querySelector('.intro').textContent = t('inboxIntro');
+  if (currentView === 'routines') {
+    dayTitle.textContent = rt('routines');
+    document.querySelector('.intro').textContent = rt('routineIntro');
     return;
   }
-  document.querySelector('.intro').textContent = t('intro');
+  if (currentView === 'inbox') {
+    dayTitle.textContent = t('inbox');
+    document.querySelector('.intro').textContent = workspace === 'work'
+      ? (language === 'ar' ? 'حافظة مستقلة لأفكار ومهام العمل القادمة.' : 'A separate inbox for future work tasks and ideas.')
+      : t('inboxIntro');
+    return;
+  }
+  document.querySelector('.intro').textContent = workspace === 'work'
+    ? (language === 'ar' ? 'مساحة هادئة ومركزة للعمل فقط.' : 'A calm, focused space for work only.')
+    : t('intro');
   const selected = fromISO(currentDate);
   monthLabel.textContent = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(selected);
   dayTitle.textContent = currentDate === today ? t('today') : new Intl.DateTimeFormat(locale, { weekday: 'long', month: 'short', day: 'numeric' }).format(selected);
@@ -194,7 +301,7 @@ function renderCalendar() {
     const value = fromISO(iso);
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = `day-chip${iso === currentDate ? ' selected' : ''}${activeDays.has(iso) ? ' has-tasks' : ''}`;
+    button.className = `day-chip${iso === currentDate ? ' selected' : ''}${activeDays.has(iso) ? ' has-tasks' : ''}${completedDays.has(iso) ? ' all-complete' : ''}`;
     button.dataset.date = iso;
     button.setAttribute('aria-label', new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(value));
     button.innerHTML = `<span>${new Intl.DateTimeFormat(locale, { weekday: 'narrow' }).format(value)}</span><strong>${value.getDate()}</strong><i></i>`;
@@ -203,7 +310,9 @@ function renderCalendar() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  const separator = path.includes('?') ? '&' : '?';
+  const scopedPath = path.startsWith('/api/') ? `${path}${separator}workspace=${encodeURIComponent(workspace)}` : path;
+  const response = await fetch(scopedPath, { headers: { 'Content-Type': 'application/json' }, ...options });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Something went wrong');
   return payload;
@@ -213,6 +322,7 @@ const escapeHtml = value => value.replace(/[&<>'"]/g, char => ({'&':'&amp;','<':
 const grip = () => `<span class="grip" aria-label="${language === 'ar' ? 'اسحب لإعادة الترتيب' : 'Drag to reorder'}">${'<i></i>'.repeat(6)}</span>`;
 
 function render() {
+  syncLocalToday();
   list.innerHTML = '';
   const labels = [...new Set(tasks.map(task => task.label).filter(Boolean))].sort();
   labelFilter.hidden = currentView !== 'inbox' || labels.length === 0;
@@ -225,19 +335,25 @@ function render() {
   const visibleTasks = activeLabel && currentView === 'inbox' ? tasks.filter(task => task.label === activeLabel) : tasks;
   visibleTasks.forEach((task, index) => {
     const item = document.createElement('li');
-    item.className = `task${task.completed ? ' completed' : ''}${task.parent_id ? ' child-task' : ''}`;
+    item.className = `task${task.completed ? ' completed' : ''}${task.parent_id ? ' child-task' : ''}${task.routine_occurrence_id ? ' routine-task' : ''}`;
     item.dataset.id = task.id;
     item.draggable = true;
     const label = task.label ? `<span class="task-label ${task.label_color || 'gray'}"><i></i>${escapeHtml(task.label)}</span>` : '';
     const plan = task.location === 'inbox' && task.planning_kind !== 'none' ? `<span class="planning-badge">${escapeHtml(task.planning_value || task.planning_kind)}</span>` : '';
+    const routineBadge = task.routine_occurrence_id ? `<span class="routine-badge">🔁 ${rt('routineBadge')}</span>` : '';
+    const carriedBadge = task.carried_from_date && task.carried_from_date !== task.task_date ? `<span class="carried-badge">${rt('carried')} ${escapeHtml(task.carried_from_date)}</span>` : '';
+    const followBadge = task.routine_occurrence_id && task.follow_until_complete && !task.parent_id ? `<span class="follow-badge">◎ ${rt('followBadge')}</span>` : '';
+    const missedBadge = task.routine_occurrence_id && !task.completed && !task.parent_id && task.task_date < today ? `<span class="missed-badge">○ ${rt('missed')}</span>` : '';
     const transferIcon = currentView === 'inbox' ? '📤' : '📥';
     const transferText = currentView === 'inbox' ? (language === 'ar' ? 'نقل إلى اليوم' : 'Move to today') : (language === 'ar' ? 'نقل إلى الحافظة' : 'Move to inbox');
     item.innerHTML = `<button type="button" class="check-button" data-check aria-label="${language === 'ar' ? (task.completed ? 'جعل المهمة غير مكتملة' : 'إكمال المهمة') : `Mark ${escapeHtml(task.title)} ${task.completed ? 'incomplete' : 'complete'}`}" aria-pressed="${Boolean(task.completed)}"><span aria-hidden="true">✓</span></button>
-      <span class="task-copy"><span class="task-title"></span><span class="task-meta">${label}${plan}</span></span>
+      <span class="task-copy"><span class="task-title"></span><span class="task-meta">${label}${plan}${routineBadge}${carriedBadge}${followBadge}${missedBadge}</span></span>
       <span class="task-actions">
         <button type="button" class="edit-button" data-edit aria-label="${language === 'ar' ? 'تعديل المهمة' : `Edit ${escapeHtml(task.title)}`} "><span aria-hidden="true">✏️</span></button>
+        <button type="button" class="subtask-button" data-add-subtask aria-label="${task.parent_id ? (language === 'ar' ? 'المهام الفرعية بمستوى واحد فقط' : 'Subtasks are limited to one level') : (language === 'ar' ? 'إضافة مهمة فرعية' : 'Add subtask')}" ${task.parent_id ? 'disabled' : ''}><span aria-hidden="true">➕</span></button>
+        ${!task.parent_id && !task.routine_occurrence_id ? `<button type="button" class="routine-button" data-make-routine aria-label="${language === 'ar' ? 'تحويل إلى روتين' : 'Make recurring'}"><span aria-hidden="true">🔁</span></button>` : ''}
         <button type="button" class="label-button" data-label aria-label="${language === 'ar' ? 'وسم المهمة' : `Label ${escapeHtml(task.title)}`} "><span aria-hidden="true">🏷️</span></button>
-        <button type="button" class="transfer-button" data-transfer aria-label="${transferText}: ${escapeHtml(task.title)}"><span aria-hidden="true">${transferIcon}</span></button>
+        ${task.routine_occurrence_id ? '' : `<button type="button" class="transfer-button" data-transfer aria-label="${transferText}: ${escapeHtml(task.title)}"><span aria-hidden="true">${transferIcon}</span></button>`}
         <button type="button" class="delete-button" data-delete aria-label="${language === 'ar' ? 'حذف المهمة' : `Delete ${escapeHtml(task.title)}`} "><span aria-hidden="true">🗑️</span></button>
       </span>
       <button type="button" class="star-button${task.starred ? ' starred' : ''}" data-star aria-label="${language === 'ar' ? (task.starred ? 'إزالة النجمة' : 'تمييز بنجمة') : `${task.starred ? 'Remove star from' : 'Star'} ${escapeHtml(task.title)}`}" aria-pressed="${Boolean(task.starred)}"><span aria-hidden="true">★</span></button>
@@ -291,24 +407,27 @@ async function loadTasks() {
 
 async function loadActiveDays() {
   try {
-    const days = await api('/api/task-days');
+    const days = await api(`/api/task-days?through=${shifted(currentDate, 14)}`);
     activeDays = new Set(days.map(day => day.task_date));
+    completedDays = new Set(days.filter(day => Number(day.task_count) > 0 && Number(day.incomplete_count) === 0).map(day => day.task_date));
     renderCalendar();
   } catch { renderCalendar(); }
 }
 
 async function loadOverdue() {
+  syncLocalToday();
   if (currentView === 'inbox' || currentDate !== today) { overdueSection.hidden = true; return; }
   try {
     const overdue = await api(`/api/tasks/overdue?before=${today}`);
     overdueSection.hidden = overdue.length === 0;
-    overdueCount.textContent = `${overdue.length} ${overdue.length === 1 ? 'task' : 'tasks'}`;
+    overdueCount.textContent = language === 'ar' ? `${overdue.length} ${overdue.length === 1 ? 'مهمة' : 'مهام'}` : `${overdue.length} ${overdue.length === 1 ? 'task' : 'tasks'}`;
     overdueList.innerHTML = '';
     overdue.forEach(task => {
       const item = document.createElement('li');
-      item.innerHTML = `<span><strong></strong><small></small></span><button type="button" data-move-today="${task.id}">${language === 'ar' ? 'نقل إلى اليوم' : 'Move to today'}</button>`;
+      const inboxAction = task.routine_occurrence_id ? '' : `<button type="button" class="overdue-icon" data-overdue-action="inbox" data-task-id="${task.id}" aria-label="${rt('toInbox')}" title="${rt('toInbox')}">📥</button>`;
+      item.innerHTML = `<span><strong></strong><small></small></span><span class="overdue-actions${task.routine_occurrence_id ? ' routine-overdue' : ''}"><button type="button" class="overdue-primary" data-overdue-action="today" data-task-id="${task.id}">${rt('moveToday')}</button>${inboxAction}<button type="button" class="overdue-icon" data-overdue-action="ignore" data-task-id="${task.id}" aria-label="${rt('ignore')}" title="${rt('ignore')}">🚫</button></span>`;
       item.querySelector('strong').textContent = task.title;
-      item.querySelector('small').textContent = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(fromISO(task.task_date));
+      item.querySelector('small').textContent = `${new Intl.DateTimeFormat(language === 'ar' ? 'ar' : 'en', { month: 'short', day: 'numeric' }).format(fromISO(task.task_date))}${task.routine_occurrence_id ? ` · ${rt('routineBadge')}` : ''}`;
       overdueList.appendChild(item);
     });
   } catch { overdueSection.hidden = true; }
@@ -328,6 +447,7 @@ async function toggleTask(task) {
   try {
     const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ completed: Boolean(task.completed) }) });
     task.completed = Boolean(updated.completed);
+    await loadTasks();
     announcer.textContent = `${task.title} marked ${task.completed ? 'complete' : 'incomplete'}.`;
     loadOverdue();
   } catch (err) {
@@ -365,6 +485,20 @@ async function editTask(task) {
   editTitle.focus();
 }
 
+async function addSubtask(task) {
+  const promptText = language === 'ar' ? `أضف مهمة فرعية إلى «${task.title}»` : `Add a subtask to “${task.title}”`;
+  const title = window.prompt(promptText);
+  if (title === null || !title.trim()) return;
+  try {
+    await api('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ title: title.trim(), parent_id: task.id, task_date: task.task_date, location: task.location }),
+    });
+    await loadTasks();
+    announcer.textContent = language === 'ar' ? 'تمت إضافة المهمة الفرعية.' : 'Subtask added.';
+  } catch (err) { error.textContent = err.message; }
+}
+
 async function transferTask(task) {
   const toInbox = currentView !== 'inbox';
   try {
@@ -372,8 +506,7 @@ async function transferTask(task) {
       method: 'PUT',
       body: JSON.stringify(toInbox ? { location: 'inbox', parent_id: null, starred: false } : { location: 'day', task_date: today, parent_id: null, starred: false }),
     });
-    tasks = tasks.filter(entry => entry.id !== task.id);
-    render();
+    await loadTasks();
     await Promise.all([loadActiveDays(), loadOverdue()]);
     announcer.textContent = toInbox ? 'Task moved to inbox.' : 'Task moved to today.';
   } catch (err) { error.textContent = err.message; }
@@ -396,13 +529,26 @@ async function changeHierarchy(task, parentId) {
   } catch (err) { error.textContent = err.message; }
 }
 
-function openLabelDialog(task) {
+function renderLabelSuggestions() {
+  const selected = labelName.value.trim().toLocaleLowerCase();
+  labelSuggestions.innerHTML = savedLabels.map(label => `<button type="button" class="label-suggestion ${label.color || 'gray'}${label.name.toLocaleLowerCase() === selected ? ' selected' : ''}" data-saved-label="${escapeHtml(label.name)}" data-saved-color="${escapeHtml(label.color || 'gray')}"><i></i><span>${escapeHtml(label.name)}</span></button>`).join('');
+}
+
+async function loadSavedLabels() {
+  try {
+    savedLabels = await api('/api/labels');
+    renderLabelSuggestions();
+  } catch { savedLabels = []; renderLabelSuggestions(); }
+}
+
+async function openLabelDialog(task) {
   labelingTask = task;
   labelName.value = task.label || '';
   const color = task.label_color || 'green';
   const option = labelForm.querySelector(`[name="label-color"][value="${color}"]`);
   if (option) option.checked = true;
   labelDialog.showModal();
+  await loadSavedLabels();
   labelName.focus();
 }
 
@@ -414,6 +560,7 @@ async function saveLabel(label, color) {
     });
     labelingTask.label = updated.label;
     labelingTask.label_color = updated.label_color;
+    await loadSavedLabels();
     render();
     labelDialog.close();
     announcer.textContent = label ? `Label ${label} added.` : 'Label removed.';
@@ -438,6 +585,10 @@ list.addEventListener('click', event => {
   if (check) { toggleTask(tasks.find(task => task.id === Number(check.closest('.task').dataset.id))); return; }
   const edit = event.target.closest('[data-edit]');
   if (edit) { editTask(tasks.find(task => task.id === Number(edit.closest('.task').dataset.id))); return; }
+  const subtask = event.target.closest('[data-add-subtask]');
+  if (subtask) { addSubtask(tasks.find(task => task.id === Number(subtask.closest('.task').dataset.id))); return; }
+  const makeRoutine = event.target.closest('[data-make-routine]');
+  if (makeRoutine) { prepareRoutineFromTask(tasks.find(task => task.id === Number(makeRoutine.closest('.task').dataset.id))); return; }
   const label = event.target.closest('[data-label]');
   if (label) { openLabelDialog(tasks.find(task => task.id === Number(label.closest('.task').dataset.id))); return; }
   const transfer = event.target.closest('[data-transfer]');
@@ -448,7 +599,10 @@ list.addEventListener('click', event => {
   if (enlist && !enlist.disabled) {
     const task = tasks.find(entry => entry.id === Number(enlist.closest('.task').dataset.id));
     const index = tasks.indexOf(task);
-    if (index > 0) changeHierarchy(task, tasks[index - 1].id);
+    if (index > 0) {
+      const previous = tasks[index - 1];
+      changeHierarchy(task, previous.parent_id || previous.id);
+    }
     return;
   }
   const outlist = event.target.closest('[data-outlist]');
@@ -545,12 +699,13 @@ weekStrip.addEventListener('pointerup', event => {
 });
 
 overdueList.addEventListener('click', async event => {
-  const button = event.target.closest('[data-move-today]');
+  const button = event.target.closest('[data-overdue-action]');
   if (!button) return;
   try {
-    await api(`/api/tasks/${button.dataset.moveToday}`, { method: 'PUT', body: JSON.stringify({ task_date: today }) });
+    syncLocalToday();
+    await api(`/api/tasks/${button.dataset.taskId}/overdue-action`, { method: 'POST', body: JSON.stringify({ action: button.dataset.overdueAction, target_date: today }) });
     await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
-    announcer.textContent = 'Task moved to today.';
+    announcer.textContent = language === 'ar' ? 'تم تحديث المهمة المتأخرة.' : 'Overdue task updated.';
   } catch (err) { error.textContent = err.message; }
 });
 
@@ -558,13 +713,20 @@ async function setView(view) {
   currentView = view;
   activeLabel = '';
   document.body.classList.toggle('inbox-view', view === 'inbox');
-  if (view === 'day') document.body.classList.remove('dreams-view', 'history-view');
+  document.body.classList.toggle('routines-view', view === 'routines');
+  if (view !== 'inbox') document.body.classList.remove('dreams-view', 'history-view');
   navToday.classList.toggle('active', view === 'day');
   navInbox.classList.toggle('active', view === 'inbox');
-  if (view === 'day') { navToday.setAttribute('aria-current', 'page'); navInbox.removeAttribute('aria-current'); }
-  else { navInbox.setAttribute('aria-current', 'page'); navToday.removeAttribute('aria-current'); }
+  navRoutines.classList.toggle('active', view === 'routines');
+  [navToday, navInbox, navRoutines].forEach(button => button.removeAttribute('aria-current'));
+  ({ day: navToday, inbox: navInbox, routines: navRoutines })[view].setAttribute('aria-current', 'page');
   input.placeholder = view === 'inbox' ? t('later') : t('add');
   renderCalendar();
+  if (view === 'routines') {
+    overdueSection.hidden = true;
+    await loadRoutines();
+    return;
+  }
   await Promise.all([loadTasks(), loadOverdue()]);
 }
 
@@ -660,13 +822,216 @@ async function loadHistory() {
   } catch (err) { error.textContent = err.message; }
 }
 
+function updateRoutineScheduleFields() {
+  const frequency = routineFrequency.value;
+  routineWeekdays.hidden = frequency !== 'weekly';
+  document.querySelector('#routine-monthly').hidden = frequency !== 'monthly';
+  document.querySelector('#routine-yearly').hidden = frequency !== 'yearly';
+  const units = language === 'ar'
+    ? { daily:'يوم', weekly:'أسبوع', monthly:'شهر', yearly:'سنة' }
+    : { daily:'day(s)', weekly:'week(s)', monthly:'month(s)', yearly:'year(s)' };
+  document.querySelector('#routine-interval-unit').textContent = units[frequency];
+  const endWrap = document.querySelector('#routine-end-value-wrap');
+  endWrap.hidden = routineEndMode.value === 'never';
+  routineEndValue.type = routineEndMode.value === 'date' ? 'date' : 'number';
+  routineEndValue.min = routineEndMode.value === 'date' ? routineStart.value : '1';
+  routineEndValue.max = routineEndMode.value === 'count' ? '10000' : '';
+  document.querySelector('#routine-end-value-label').textContent = routineEndMode.value === 'date' ? rt('endDate') : rt('occurrences');
+}
+
+function resetRoutineForm() {
+  editingRoutine = null;
+  routineId.value = '';
+  routineForm.reset();
+  routineStart.value = today;
+  routineInterval.value = '1';
+  routineFrequency.value = 'daily';
+  routineEndMode.value = 'never';
+  routineFollow.checked = false;
+  routineWeekdays.querySelectorAll('input').forEach(input => { input.checked = Number(input.value) === fromISO(today).getDay() - 1 || (fromISO(today).getDay() === 0 && Number(input.value) === 6); });
+  routineCancel.hidden = true;
+  document.querySelector('#routine-save').textContent = rt('create');
+  updateRoutineScheduleFields();
+}
+
+function routineFormPayload() {
+  const steps = routineSteps.value.split('\n').map(value => value.trim()).filter(Boolean);
+  return {
+    title: routineTitle.value.trim(),
+    start_date: routineStart.value,
+    frequency: routineFrequency.value,
+    interval_value: Number(routineInterval.value),
+    weekdays: [...routineWeekdays.querySelectorAll('input:checked')].map(input => Number(input.value)),
+    month_day: routineFrequency.value === 'monthly' ? Number(routineMonthDay.value) : null,
+    year_month: routineFrequency.value === 'yearly' ? Number(routineYearMonth.value) : null,
+    year_day: routineFrequency.value === 'yearly' ? Number(routineYearDay.value) : null,
+    end_mode: routineEndMode.value,
+    end_value: routineEndMode.value === 'never' ? null : routineEndValue.value,
+    follow_until_complete: routineFollow.checked,
+    steps,
+  };
+}
+
+function routineSummary(routine) {
+  const weekdays = language === 'ar' ? ['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'] : ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  let schedule = rt(routine.frequency);
+  if (routine.interval_value > 1) schedule += language === 'ar' ? ` · كل ${routine.interval_value}` : ` · every ${routine.interval_value}`;
+  if (routine.frequency === 'weekly') schedule += ` · ${routine.weekdays.map(day => weekdays[day]).join('، ')}`;
+  if (routine.frequency === 'monthly') schedule += ` · ${routine.month_day === -1 ? (language === 'ar' ? 'آخر يوم' : 'last day') : routine.month_day}`;
+  if (routine.frequency === 'yearly') schedule += ` · ${routine.year_month}/${routine.year_day}`;
+  schedule += ` · ${routine.start_date}`;
+  if (routine.follow_until_complete) schedule += ` · ${rt('follow')}`;
+  if (routine.steps.length) schedule += ` · ${routine.steps.length} ${language === 'ar' ? 'مهام فرعية' : 'subtasks'}`;
+  return schedule;
+}
+
+function renderRoutines() {
+  routineList.innerHTML = '';
+  if (!routines.length) routineList.innerHTML = `<p class="history-range">${rt('noRoutines')}</p>`;
+  routines.forEach(routine => {
+    const card = document.createElement('article');
+    card.className = `routine-card${routine.active ? '' : ' paused'}`;
+    card.innerHTML = `<div><h3></h3><p></p></div><span class="routine-card-actions"><button type="button" data-routine-edit aria-label="${language === 'ar' ? 'تعديل الروتين' : 'Edit routine'}">✏️</button><button type="button" data-routine-toggle aria-label="${routine.active ? (language === 'ar' ? 'إيقاف مؤقت' : 'Pause') : (language === 'ar' ? 'استئناف' : 'Resume')}">${routine.active ? '⏸️' : '▶️'}</button><button type="button" class="routine-delete" data-routine-delete aria-label="${language === 'ar' ? 'إيقاف الروتين نهائيًا' : 'Stop routine'}">🗑️</button></span>`;
+    card.querySelector('h3').textContent = `${routine.title} · ${routine.active ? rt('active') : rt('paused')}`;
+    card.querySelector('p').textContent = routineSummary(routine);
+    card.querySelector('[data-routine-edit]').addEventListener('click', () => editRoutine(routine));
+    card.querySelector('[data-routine-toggle]').addEventListener('click', () => toggleRoutine(routine));
+    card.querySelector('[data-routine-delete]').addEventListener('click', () => deleteRoutine(routine));
+    routineList.appendChild(card);
+  });
+  const selected = routineStatsFilter.value;
+  routineStatsFilter.innerHTML = `<option value="">${rt('allRoutines')}</option>${routines.map(routine => `<option value="${routine.id}">${escapeHtml(routine.title)}</option>`).join('')}`;
+  routineStatsFilter.value = routines.some(routine => String(routine.id) === selected) ? selected : '';
+}
+
+async function loadRoutines() {
+  try {
+    routines = await api('/api/routines');
+    renderRoutines();
+    if (!routineStats.hidden) await loadRoutineStats();
+  } catch (err) { error.textContent = err.message; }
+}
+
+function editRoutine(routine) {
+  editingRoutine = routine;
+  routineId.value = routine.id;
+  routineTitle.value = routine.title;
+  routineStart.value = routine.start_date;
+  routineFrequency.value = routine.frequency;
+  routineInterval.value = routine.interval_value;
+  routineWeekdays.querySelectorAll('input').forEach(input => { input.checked = routine.weekdays.includes(Number(input.value)); });
+  routineMonthDay.value = String(routine.month_day ?? 1);
+  routineYearMonth.value = String(routine.year_month ?? 1);
+  routineYearDay.value = String(routine.year_day ?? 1);
+  routineEndMode.value = routine.end_mode;
+  routineEndValue.value = routine.end_value || '';
+  routineFollow.checked = Boolean(routine.follow_until_complete);
+  routineSteps.value = routine.steps.join('\n');
+  routineCancel.hidden = false;
+  document.querySelector('#routine-save').textContent = rt('update');
+  updateRoutineScheduleFields();
+  routineForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  routineTitle.focus();
+}
+
+async function toggleRoutine(routine) {
+  try {
+    await api(`/api/routines/${routine.id}`, { method: 'PUT', body: JSON.stringify({ active: !Boolean(routine.active) }) });
+    await Promise.all([loadRoutines(), loadTasks(), loadActiveDays(), loadOverdue()]);
+  } catch (err) { error.textContent = err.message; }
+}
+
+async function deleteRoutine(routine) {
+  const message = language === 'ar' ? `إيقاف «${routine.title}» وحذف مواعيده القادمة؟ سيبقى السجل السابق.` : `Stop “${routine.title}” and remove upcoming occurrences? Past history will remain.`;
+  if (!window.confirm(message)) return;
+  try {
+    await api(`/api/routines/${routine.id}`, { method: 'DELETE' });
+    await Promise.all([loadRoutines(), loadActiveDays(), loadOverdue()]);
+  } catch (err) { error.textContent = err.message; }
+}
+
+async function prepareRoutineFromTask(task) {
+  const sourceTasks = [...tasks];
+  await setView('routines');
+  resetRoutineForm();
+  routineTitle.value = task.title;
+  routineStart.value = task.task_date < today ? today : task.task_date;
+  routineSteps.value = sourceTasks.filter(entry => entry.parent_id === task.id).map(entry => entry.title).join('\n');
+  routineFollow.checked = false;
+  routineTitle.focus();
+}
+
+let routineChartState = null;
+
+function drawRoutineChart(result) {
+  const metric = routineStatsMetric.value;
+  const container = routineChart.parentElement;
+  const width = Math.max(280, container.clientWidth);
+  const height = 220;
+  const scale = window.devicePixelRatio || 1;
+  routineChart.width = width * scale;
+  routineChart.height = height * scale;
+  const context = routineChart.getContext('2d');
+  context.scale(scale, scale);
+  context.clearRect(0, 0, width, height);
+  const padding = { left: 34, right: 12, top: 18, bottom: 28 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const values = result.points.map(point => metric === 'percentage' ? point.percentage : point.completed);
+  const drawable = result.points.map((point, index) => ({ point, index, value: values[index] })).filter(item => item.value !== null);
+  const maxValue = metric === 'percentage' ? 100 : Math.max(1, ...values.filter(value => value !== null));
+  context.strokeStyle = '#dcddd6'; context.lineWidth = 1; context.fillStyle = '#718078'; context.font = '10px DM Sans, sans-serif';
+  [0, .5, 1].forEach(ratio => {
+    const y = padding.top + chartHeight * (1 - ratio);
+    context.beginPath(); context.moveTo(padding.left, y); context.lineTo(width - padding.right, y); context.stroke();
+    context.fillText(String(Math.round(maxValue * ratio)), 3, y + 3);
+  });
+  const xFor = index => padding.left + (result.points.length === 1 ? chartWidth / 2 : chartWidth * index / (result.points.length - 1));
+  const yFor = value => padding.top + chartHeight * (1 - value / maxValue);
+  context.strokeStyle = '#28553f'; context.lineWidth = 2.5; context.lineJoin = 'round'; context.lineCap = 'round';
+  context.beginPath();
+  drawable.forEach((item, index) => { const x = xFor(item.index); const y = yFor(item.value); if (index === 0) context.moveTo(x, y); else context.lineTo(x, y); });
+  context.stroke();
+  if (drawable.length <= 31) {
+    context.fillStyle = '#ee7049';
+    drawable.forEach(item => { context.beginPath(); context.arc(xFor(item.index), yFor(item.value), 3.5, 0, Math.PI * 2); context.fill(); });
+  }
+  context.fillStyle = '#718078';
+  context.fillText(result.start, padding.left, height - 7);
+  const endWidth = context.measureText(result.end).width;
+  context.fillText(result.end, width - padding.right - endWidth, height - 7);
+  routineChartState = { result, xFor, width };
+  const totals = result.points.reduce((sum, point) => ({ completed: sum.completed + point.completed, scheduled: sum.scheduled + point.scheduled }), { completed: 0, scheduled: 0 });
+  const percentage = totals.scheduled ? Math.round(totals.completed * 100 / totals.scheduled) : 0;
+  document.querySelector('#routine-chart-summary').textContent = language === 'ar' ? `${totals.completed} من ${totals.scheduled} مكتملة · ${percentage}%` : `${totals.completed} of ${totals.scheduled} completed · ${percentage}%`;
+  routineChart.setAttribute('aria-label', document.querySelector('#routine-chart-summary').textContent);
+}
+
+async function loadRoutineStats() {
+  try {
+    const filter = routineStatsFilter.value ? `&routine_id=${routineStatsFilter.value}` : '';
+    const result = await api(`/api/routines/stats?days=${routineStatsPeriod.value}${filter}`);
+    drawRoutineChart(result);
+  } catch (err) { error.textContent = err.message; }
+}
+
 navToday.addEventListener('click', () => { currentDate = today; setView('day'); });
 navInbox.addEventListener('click', async () => { await setView('inbox'); setInboxSubView('inbox'); });
+navRoutines.addEventListener('click', () => setView('routines'));
 labelForm.addEventListener('submit', event => {
   event.preventDefault();
   const color = labelForm.querySelector('[name="label-color"]:checked').value;
   saveLabel(labelName.value.trim(), color);
 });
+labelSuggestions.addEventListener('click', event => {
+  const choice = event.target.closest('[data-saved-label]');
+  if (!choice) return;
+  labelName.value = choice.dataset.savedLabel;
+  const color = labelForm.querySelector(`[name="label-color"][value="${choice.dataset.savedColor}"]`);
+  if (color) color.checked = true;
+  renderLabelSuggestions();
+});
+labelName.addEventListener('input', renderLabelSuggestions);
 document.querySelector('.dialog-close').addEventListener('click', () => labelDialog.close());
 document.querySelector('#remove-label').addEventListener('click', () => saveLabel('', null));
 editForm.addEventListener('submit', async event => {
@@ -701,6 +1066,19 @@ languageToggle.addEventListener('click', () => {
   localStorage.setItem('taskline-language', language);
   applyLanguage();
 });
+workspaceToggle.addEventListener('click', async () => {
+  workspace = workspace === 'personal' ? 'work' : 'personal';
+  localStorage.setItem('taskline-workspace', workspace);
+  currentDate = today;
+  activeLabel = '';
+  savedLabels = [];
+  applyWorkspace();
+  await setView('day');
+  await Promise.all([loadActiveDays(), loadSavedLabels()]);
+  announcer.textContent = workspace === 'work'
+    ? (language === 'ar' ? 'تم فتح مساحة العمل.' : 'Work space opened.')
+    : (language === 'ar' ? 'تم فتح المساحة الشخصية.' : 'Personal space opened.');
+});
 const monthCodes = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 for (let year = fromISO(today).getFullYear(); year <= fromISO(today).getFullYear() + 30; year += 1) {
   [planningYear, editPlanYear, document.querySelector('#dream-year')].forEach(select => select.add(new Option(String(year), String(year))));
@@ -708,6 +1086,12 @@ for (let year = fromISO(today).getFullYear(); year <= fromISO(today).getFullYear
 monthCodes.forEach((month, index) => {
   planningMonth.add(new Option(month, month)); editPlanMonth.add(new Option(month, month));
 });
+for (let day = 1; day <= 31; day += 1) {
+  routineMonthDay.add(new Option(String(day), String(day)));
+  routineYearDay.add(new Option(String(day), String(day)));
+}
+routineMonthDay.add(new Option('Last day', '-1'));
+for (let month = 1; month <= 12; month += 1) routineYearMonth.add(new Option(String(month), String(month)));
 planningYear.value = localStorage.getItem('taskline-plan-year') || '';
 planningQuarter.value = localStorage.getItem('taskline-plan-quarter') || '';
 planningMonth.value = localStorage.getItem('taskline-plan-month') || '';
@@ -747,7 +1131,60 @@ document.querySelector('#dream-detail-form').addEventListener('submit', async ev
 });
 historyPeriod.value = localStorage.getItem('taskline-history-period') || 'month';
 historyPeriod.addEventListener('change', () => { localStorage.setItem('taskline-history-period', historyPeriod.value); loadHistory(); });
+routineFrequency.addEventListener('change', updateRoutineScheduleFields);
+routineEndMode.addEventListener('change', updateRoutineScheduleFields);
+routineStart.addEventListener('change', updateRoutineScheduleFields);
+routineCancel.addEventListener('click', resetRoutineForm);
+routineForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!routineTitle.value.trim() || !routineStart.value) return;
+  try {
+    const target = editingRoutine ? `/api/routines/${editingRoutine.id}` : '/api/routines';
+    const method = editingRoutine ? 'PUT' : 'POST';
+    await api(target, { method, body: JSON.stringify(routineFormPayload()) });
+    resetRoutineForm();
+    await Promise.all([loadRoutines(), loadTasks(), loadActiveDays(), loadOverdue()]);
+    announcer.textContent = language === 'ar' ? 'تم حفظ الروتين.' : 'Routine saved.';
+  } catch (err) { error.textContent = err.message; }
+});
+routineStatsMetric.value = localStorage.getItem('taskline-routine-chart-metric') || 'percentage';
+routineStatsPeriod.value = localStorage.getItem('taskline-routine-chart-period') || '30';
+routineStatsToggle.addEventListener('click', async () => {
+  routineStats.hidden = !routineStats.hidden;
+  routineStatsToggle.setAttribute('aria-expanded', String(!routineStats.hidden));
+  if (!routineStats.hidden) await loadRoutineStats();
+});
+routineStatsMetric.addEventListener('change', () => { localStorage.setItem('taskline-routine-chart-metric', routineStatsMetric.value); loadRoutineStats(); });
+routineStatsPeriod.addEventListener('change', () => { localStorage.setItem('taskline-routine-chart-period', routineStatsPeriod.value); loadRoutineStats(); });
+routineStatsFilter.addEventListener('change', loadRoutineStats);
+routineChart.addEventListener('click', event => {
+  if (!routineChartState) return;
+  const rect = routineChart.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const points = routineChartState.result.points;
+  let nearest = 0;
+  let distance = Infinity;
+  points.forEach((point, index) => { const nextDistance = Math.abs(routineChartState.xFor(index) - x); if (nextDistance < distance) { distance = nextDistance; nearest = index; } });
+  const point = points[nearest];
+  document.querySelector('#routine-chart-summary').textContent = language === 'ar'
+    ? `${point.date}: ${point.completed} من ${point.scheduled} · ${point.percentage === null ? '—' : `${point.percentage}%`}`
+    : `${point.date}: ${point.completed} of ${point.scheduled} · ${point.percentage === null ? '—' : `${point.percentage}%`}`;
+});
+window.addEventListener('resize', () => { if (currentView === 'routines' && !routineStats.hidden) loadRoutineStats(); });
+document.addEventListener('visibilitychange', async () => {
+  if (!document.hidden && syncLocalToday()) {
+    renderCalendar();
+    await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
+  }
+});
+setInterval(async () => {
+  if (syncLocalToday()) {
+    renderCalendar();
+    await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
+  }
+}, 60_000);
 
+resetRoutineForm();
 renderCalendar();
 applyLanguage();
 Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);

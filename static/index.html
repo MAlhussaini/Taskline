@@ -6,13 +6,19 @@
   <meta name="theme-color" content="#f5f3ed">
   <title>Taskline</title>
   <meta name="description" content="A calm, focused checklist.">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=1">
+  <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
   <header class="app-header">
-    <a class="brand" href="/" aria-label="Taskline home"><span>✓</span> Taskline</a>
-    <button id="language-toggle" class="header-action" type="button" aria-label="Change language">العربية</button>
+    <a class="brand" href="/" aria-label="Taskline home"><span>✓</span> <strong id="brand-title">Taskline</strong></a>
+    <div class="header-actions">
+      <span id="workspace-indicator" class="workspace-indicator" role="status" aria-label="Personal space" title="Personal space">🏡</span>
+      <button id="workspace-toggle" class="header-action workspace-toggle" type="button" aria-label="Switch to Work" title="Switch to Work">💼</button>
+      <button id="language-toggle" class="header-action" type="button" aria-label="Change language">العربية</button>
+    </div>
   </header>
 
   <main class="shell">
@@ -97,12 +103,46 @@
       </div>
       <ul id="overdue-list" class="overdue-list"></ul>
     </section>
+
+    <section id="routines-section" class="advanced-section routines-section">
+      <div class="routine-hero">
+        <div><h2 id="routine-heading">Routines</h2><p id="routine-description">Create repeating tasks and keep their history.</p></div>
+        <button id="routine-stats-toggle" type="button" aria-expanded="false">📈 <span>Statistics</span></button>
+      </div>
+      <form id="routine-form" class="routine-form" autocomplete="off">
+        <input id="routine-id" type="hidden">
+        <label class="wide"><span id="routine-title-label">Routine</span><input id="routine-title" maxlength="280" placeholder="Take out the trash" required></label>
+        <label><span id="routine-start-label">Starts</span><input id="routine-start" type="date" required></label>
+        <label><span id="routine-frequency-label">Repeats</span><select id="routine-frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>
+        <label><span id="routine-interval-label">Every</span><span class="interval-control"><input id="routine-interval" type="number" min="1" max="99" value="1"><small id="routine-interval-unit">day(s)</small></span></label>
+        <fieldset id="routine-weekdays" class="routine-schedule wide" hidden><legend>Days of the week</legend><div class="weekday-options"><label><input type="checkbox" value="6"><span>Sun</span></label><label><input type="checkbox" value="0"><span>Mon</span></label><label><input type="checkbox" value="1"><span>Tue</span></label><label><input type="checkbox" value="2"><span>Wed</span></label><label><input type="checkbox" value="3"><span>Thu</span></label><label><input type="checkbox" value="4"><span>Fri</span></label><label><input type="checkbox" value="5"><span>Sat</span></label></div></fieldset>
+        <label id="routine-monthly" class="routine-schedule" hidden><span>Day of month</span><select id="routine-month-day"></select></label>
+        <div id="routine-yearly" class="routine-schedule routine-yearly" hidden><label><span>Month</span><select id="routine-year-month"></select></label><label><span>Day</span><select id="routine-year-day"></select></label></div>
+        <label><span id="routine-end-label">Ends</span><select id="routine-end-mode"><option value="never">Never</option><option value="date">On a date</option><option value="count">After occurrences</option></select></label>
+        <label id="routine-end-value-wrap" hidden><span id="routine-end-value-label">End value</span><input id="routine-end-value"></label>
+        <label class="follow-option wide"><input id="routine-follow" type="checkbox"><span><strong id="routine-follow-title">Follow until complete</strong><small id="routine-follow-help">Show unfinished occurrences in Overdue so they can be moved.</small></span></label>
+        <label class="wide"><span id="routine-steps-label">Subtasks (one per line)</span><textarea id="routine-steps" rows="3" maxlength="3000" placeholder="First step&#10;Second step"></textarea></label>
+        <div class="routine-form-actions wide"><button id="routine-cancel" type="button" hidden>Cancel</button><button id="routine-save" type="submit">Create routine</button></div>
+      </form>
+      <div id="routine-list" class="routine-list"></div>
+      <section id="routine-stats" class="routine-stats" hidden>
+        <div class="routine-stats-controls">
+          <select id="routine-stats-period" aria-label="Statistics period"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="365">1 year</option></select>
+          <select id="routine-stats-metric" aria-label="Statistics metric"><option value="percentage">Completion percentage</option><option value="count">Completed count</option></select>
+          <select id="routine-stats-filter" aria-label="Routine filter"><option value="">All routines</option></select>
+        </div>
+        <div class="chart-wrap"><canvas id="routine-chart" height="220" role="img" aria-label="Routine progress chart"></canvas></div>
+        <p id="routine-chart-summary" class="history-range"></p>
+      </section>
+    </section>
   </main>
 
   <nav class="bottom-nav" aria-label="Main navigation">
     <button id="nav-today" type="button" class="active" aria-current="page"><span aria-hidden="true">☑</span>Today</button>
     <button id="nav-inbox" type="button"><span aria-hidden="true">📥</span>Inbox</button>
-    <button type="button" aria-disabled="true"><span aria-hidden="true">⚙</span>Settings</button>
+    <button id="nav-routines" type="button"><span aria-hidden="true">🔁</span>Routines</button>
+    <button id="nav-settings" type="button" aria-disabled="true"><span aria-hidden="true">⚙</span>Settings</button>
+    <span class="nav-spacer" aria-hidden="true"></span>
   </nav>
   <dialog id="label-dialog" class="label-dialog">
     <form id="label-form" method="dialog">
@@ -111,6 +151,7 @@
         <button type="button" class="dialog-close" aria-label="Close">×</button>
       </div>
       <label for="label-name">Label name</label>
+      <div id="label-suggestions" class="label-suggestions" aria-label="Saved labels"></div>
       <input id="label-name" maxlength="40" placeholder="Home, Car, Work…">
       <fieldset>
         <legend>Color</legend>
