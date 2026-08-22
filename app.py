@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import sqlite3
 import base64
 import calendar
@@ -1207,8 +1208,10 @@ class TodoHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     initialize_database()
-    server = ThreadingHTTPServer(("0.0.0.0", 8000), TodoHandler)
-    print("Taskline is running at http://localhost:8000")
+    host = os.environ.get("TASKLINE_HOST", "0.0.0.0")
+    port = int(os.environ.get("TASKLINE_PORT", "8000"))
+    server = ThreadingHTTPServer((host, port), TodoHandler)
+    print(f"Taskline is running at http://{host}:{port}")
     print("Press Ctrl+C to stop it.")
     try:
         server.serve_forever()
