@@ -105,8 +105,8 @@ routineCopy.en.missed = 'Missed';
 routineCopy.ar.missed = 'فائتة';
 const rt = key => routineCopy[language][key];
 const listCopy = {
-  en: { lists:'Lists', intro:'Keep groceries and any reusable checklist in one place.', name:'List name', namePlaceholder:'Groceries', create:'Create list', noLists:'No lists yet. Create one above.', empty:'No items yet.', itemPlaceholder:'Add an item…', addItem:'Add', rename:'Rename list', editItem:'Edit item', remove:'Delete list', removeItem:'Delete item', completed:'completed', renamePrompt:'New list name', itemPrompt:'Edit item', confirmRemove:'Delete this list and all its items?' },
-  ar: { lists:'القوائم', intro:'احتفظ بالمقاضي وأي قائمة أخرى تحتاجها في مكان واحد.', name:'اسم القائمة', namePlaceholder:'المقاضي', create:'إنشاء قائمة', noLists:'لا توجد قوائم بعد. أنشئ قائمتك الأولى أعلاه.', empty:'لا توجد عناصر بعد.', itemPlaceholder:'أضف عنصرًا…', addItem:'إضافة', rename:'تعديل اسم القائمة', editItem:'تعديل العنصر', remove:'حذف القائمة', removeItem:'حذف العنصر', completed:'مكتمل', renamePrompt:'اسم القائمة الجديد', itemPrompt:'تعديل العنصر', confirmRemove:'حذف هذه القائمة وجميع عناصرها؟' },
+  en: { lists:'Lists', intro:'Keep groceries and any reusable checklist in one place.', name:'List name', namePlaceholder:'Groceries', create:'Create list', noLists:'No lists yet. Create one above.', empty:'No items yet.', itemPlaceholder:'Add an item…', addItem:'Add', rename:'Rename list', editItem:'Edit item', expand:'Expand list', collapse:'Collapse list', remove:'Delete list', removeItem:'Delete item', completed:'completed', renamePrompt:'New list name', itemPrompt:'Edit item', confirmRemove:'Delete this list and all its items?' },
+  ar: { lists:'القوائم', intro:'احتفظ بالمقاضي وأي قائمة أخرى تحتاجها في مكان واحد.', name:'اسم القائمة', namePlaceholder:'المقاضي', create:'إنشاء قائمة', noLists:'لا توجد قوائم بعد. أنشئ قائمتك الأولى أعلاه.', empty:'لا توجد عناصر بعد.', itemPlaceholder:'أضف عنصرًا…', addItem:'إضافة', rename:'تعديل اسم القائمة', editItem:'تعديل العنصر', expand:'فتح القائمة', collapse:'طي القائمة', remove:'حذف القائمة', removeItem:'حذف العنصر', completed:'مكتمل', renamePrompt:'اسم القائمة الجديد', itemPrompt:'تعديل العنصر', confirmRemove:'حذف هذه القائمة وجميع عناصرها؟' },
 };
 const lt = key => listCopy[language][key];
 
@@ -947,9 +947,11 @@ function renderLists() {
   }
   checklists.forEach(checklist => {
     const card = document.createElement('article');
-    card.className = 'checklist-card';
+    const collapsedKey = `taskline-list-collapsed-${workspace}-${checklist.id}`;
+    const collapsed = localStorage.getItem(collapsedKey) === '1';
+    card.className = `checklist-card${collapsed ? ' collapsed' : ''}`;
     const completed = checklist.items.filter(item => item.completed).length;
-    card.innerHTML = `<header class="checklist-heading"><div><h3></h3><p></p></div><span class="checklist-actions"><button type="button" data-list-rename aria-label="${lt('rename')}">✏️</button><button type="button" class="checklist-delete" data-list-delete aria-label="${lt('remove')}">🗑️</button></span></header><ul class="checklist-items"></ul><p class="checklist-empty" hidden></p><form class="checklist-item-form"><label class="sr-only">${lt('itemPlaceholder')}</label><input maxlength="280" placeholder="${lt('itemPlaceholder')}" required><button type="submit">${lt('addItem')}</button></form>`;
+    card.innerHTML = `<header class="checklist-heading"><div><h3></h3><p></p></div><span class="checklist-actions"><button type="button" class="checklist-collapse" data-list-collapse aria-expanded="${!collapsed}" aria-label="${lt(collapsed ? 'expand' : 'collapse')}">${collapsed ? '▸' : '▾'}</button><button type="button" data-list-rename aria-label="${lt('rename')}">✏️</button><button type="button" class="checklist-delete" data-list-delete aria-label="${lt('remove')}">🗑️</button></span></header><ul class="checklist-items"></ul><p class="checklist-empty" hidden></p><form class="checklist-item-form"><label class="sr-only">${lt('itemPlaceholder')}</label><input maxlength="280" placeholder="${lt('itemPlaceholder')}" required><button type="submit">${lt('addItem')}</button></form>`;
     card.querySelector('h3').textContent = checklist.title;
     card.querySelector('.checklist-heading p').textContent = `${completed}/${checklist.items.length} ${lt('completed')}`;
     const itemList = card.querySelector('.checklist-items');
@@ -987,6 +989,13 @@ function renderLists() {
       });
       itemList.appendChild(row);
     });
+    card.querySelector('[data-list-collapse]').addEventListener('click', event => {
+      const isCollapsed = card.classList.toggle('collapsed');
+      localStorage.setItem(collapsedKey, isCollapsed ? '1' : '0');
+      event.currentTarget.textContent = isCollapsed ? '▸' : '▾';
+      event.currentTarget.setAttribute('aria-expanded', String(!isCollapsed));
+      event.currentTarget.setAttribute('aria-label', lt(isCollapsed ? 'expand' : 'collapse'));
+    });
     card.querySelector('[data-list-rename]').addEventListener('click', async () => {
       const title = window.prompt(lt('renamePrompt'), checklist.title)?.trim();
       if (!title || title === checklist.title) return;
@@ -999,6 +1008,7 @@ function renderLists() {
       if (!window.confirm(lt('confirmRemove'))) return;
       try {
         await api(`/api/lists/${checklist.id}`, { method: 'DELETE' });
+        localStorage.removeItem(collapsedKey);
         await loadLists();
       } catch (err) { error.textContent = err.message; }
     });
