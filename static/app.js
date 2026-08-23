@@ -18,6 +18,7 @@ const overdueCount = document.querySelector('#overdue-count');
 const navToday = document.querySelector('#nav-today');
 const navInbox = document.querySelector('#nav-inbox');
 const navRoutines = document.querySelector('#nav-routines');
+const navLists = document.querySelector('#nav-lists');
 const labelDialog = document.querySelector('#label-dialog');
 const labelForm = document.querySelector('#label-form');
 const labelName = document.querySelector('#label-name');
@@ -69,6 +70,9 @@ const routineStatsPeriod = document.querySelector('#routine-stats-period');
 const routineStatsMetric = document.querySelector('#routine-stats-metric');
 const routineStatsFilter = document.querySelector('#routine-stats-filter');
 const routineChart = document.querySelector('#routine-chart');
+const listForm = document.querySelector('#list-form');
+const listTitle = document.querySelector('#list-title');
+const listsList = document.querySelector('#lists-list');
 
 let tasks = [];
 let draggedId = null;
@@ -85,6 +89,7 @@ let language = localStorage.getItem('taskline-language') || 'en';
 let workspace = localStorage.getItem('taskline-workspace') === 'work' ? 'work' : 'personal';
 let dreams = [];
 let routines = [];
+let checklists = [];
 let editingRoutine = null;
 let savedLabels = [];
 const copy = {
@@ -99,6 +104,11 @@ const routineCopy = {
 routineCopy.en.missed = 'Missed';
 routineCopy.ar.missed = 'فائتة';
 const rt = key => routineCopy[language][key];
+const listCopy = {
+  en: { lists:'Lists', intro:'Keep groceries and any reusable checklist in one place.', name:'List name', namePlaceholder:'Groceries', create:'Create list', noLists:'No lists yet. Create one above.', empty:'No items yet.', itemPlaceholder:'Add an item…', addItem:'Add', rename:'Rename list', editItem:'Edit item', remove:'Delete list', removeItem:'Delete item', completed:'completed', renamePrompt:'New list name', itemPrompt:'Edit item', confirmRemove:'Delete this list and all its items?' },
+  ar: { lists:'القوائم', intro:'احتفظ بالمقاضي وأي قائمة أخرى تحتاجها في مكان واحد.', name:'اسم القائمة', namePlaceholder:'المقاضي', create:'إنشاء قائمة', noLists:'لا توجد قوائم بعد. أنشئ قائمتك الأولى أعلاه.', empty:'لا توجد عناصر بعد.', itemPlaceholder:'أضف عنصرًا…', addItem:'إضافة', rename:'تعديل اسم القائمة', editItem:'تعديل العنصر', remove:'حذف القائمة', removeItem:'حذف العنصر', completed:'مكتمل', renamePrompt:'اسم القائمة الجديد', itemPrompt:'تعديل العنصر', confirmRemove:'حذف هذه القائمة وجميع عناصرها؟' },
+};
+const lt = key => listCopy[language][key];
 
 function applyWorkspace() {
   const arabic = language === 'ar';
@@ -139,6 +149,7 @@ function applyLanguage() {
   navToday.lastChild.textContent = t('today');
   navInbox.lastChild.textContent = t('inbox');
   navRoutines.lastChild.textContent = rt('routines');
+  navLists.lastChild.textContent = lt('lists');
   document.querySelector('#nav-settings').lastChild.textContent = t('settings');
   document.querySelector('#tasks-heading').textContent = t('list');
   document.querySelector('#overdue-heading').textContent = t('overdue');
@@ -208,11 +219,17 @@ function applyLanguage() {
   routineStatsPeriod.setAttribute('aria-label', arabic ? 'فترة الإحصاءات' : 'Statistics period');
   routineStatsMetric.setAttribute('aria-label', arabic ? 'مقياس الإحصاءات' : 'Statistics metric');
   routineStatsFilter.setAttribute('aria-label', arabic ? 'تصفية حسب الروتين' : 'Routine filter');
+  document.querySelector('#lists-heading').textContent = lt('lists');
+  document.querySelector('#lists-description').textContent = lt('intro');
+  document.querySelector('label[for="list-title"]').textContent = lt('name');
+  listTitle.placeholder = lt('namePlaceholder');
+  document.querySelector('#list-create').textContent = lt('create');
   [...routineYearMonth.options].forEach((option, index) => { option.textContent = new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2026, index, 1)); });
   routineMonthDay.options[routineMonthDay.options.length - 1].textContent = arabic ? 'آخر يوم' : 'Last day';
   [planningMonth, editPlanMonth].forEach(select => [...select.options].slice(1).forEach((option, index) => { option.textContent = new Intl.DateTimeFormat(locale, { month: 'short' }).format(new Date(2026, index, 1)); }));
   renderCalendar(); render(); renderLabelSuggestions(); loadOverdue();
   if (currentView === 'routines') { renderRoutines(); if (!routineStats.hidden) loadRoutineStats(); }
+  if (currentView === 'lists') renderLists();
   if (inboxSubView === 'dreams') loadDreams();
   if (inboxSubView === 'history') loadHistory();
 }
@@ -714,17 +731,24 @@ async function setView(view) {
   activeLabel = '';
   document.body.classList.toggle('inbox-view', view === 'inbox');
   document.body.classList.toggle('routines-view', view === 'routines');
+  document.body.classList.toggle('lists-view', view === 'lists');
   if (view !== 'inbox') document.body.classList.remove('dreams-view', 'history-view');
   navToday.classList.toggle('active', view === 'day');
   navInbox.classList.toggle('active', view === 'inbox');
   navRoutines.classList.toggle('active', view === 'routines');
-  [navToday, navInbox, navRoutines].forEach(button => button.removeAttribute('aria-current'));
-  ({ day: navToday, inbox: navInbox, routines: navRoutines })[view].setAttribute('aria-current', 'page');
+  navLists.classList.toggle('active', view === 'lists');
+  [navToday, navInbox, navRoutines, navLists].forEach(button => button.removeAttribute('aria-current'));
+  ({ day: navToday, inbox: navInbox, routines: navRoutines, lists: navLists })[view].setAttribute('aria-current', 'page');
   input.placeholder = view === 'inbox' ? t('later') : t('add');
   renderCalendar();
   if (view === 'routines') {
     overdueSection.hidden = true;
     await loadRoutines();
+    return;
+  }
+  if (view === 'lists') {
+    overdueSection.hidden = true;
+    await loadLists();
     return;
   }
   await Promise.all([loadTasks(), loadOverdue()]);
@@ -912,6 +936,92 @@ async function loadRoutines() {
   } catch (err) { error.textContent = err.message; }
 }
 
+function renderLists() {
+  listsList.innerHTML = '';
+  if (!checklists.length) {
+    const message = document.createElement('p');
+    message.className = 'history-range lists-empty';
+    message.textContent = lt('noLists');
+    listsList.appendChild(message);
+    return;
+  }
+  checklists.forEach(checklist => {
+    const card = document.createElement('article');
+    card.className = 'checklist-card';
+    const completed = checklist.items.filter(item => item.completed).length;
+    card.innerHTML = `<header class="checklist-heading"><div><h3></h3><p></p></div><span class="checklist-actions"><button type="button" data-list-rename aria-label="${lt('rename')}">✏️</button><button type="button" class="checklist-delete" data-list-delete aria-label="${lt('remove')}">🗑️</button></span></header><ul class="checklist-items"></ul><p class="checklist-empty" hidden></p><form class="checklist-item-form"><label class="sr-only">${lt('itemPlaceholder')}</label><input maxlength="280" placeholder="${lt('itemPlaceholder')}" required><button type="submit">${lt('addItem')}</button></form>`;
+    card.querySelector('h3').textContent = checklist.title;
+    card.querySelector('.checklist-heading p').textContent = `${completed}/${checklist.items.length} ${lt('completed')}`;
+    const itemList = card.querySelector('.checklist-items');
+    const emptyMessage = card.querySelector('.checklist-empty');
+    emptyMessage.textContent = lt('empty');
+    emptyMessage.hidden = checklist.items.length !== 0;
+    checklist.items.forEach(item => {
+      const row = document.createElement('li');
+      row.className = item.completed ? 'completed' : '';
+      row.innerHTML = `<label><input type="checkbox"><span></span></label><span class="checklist-item-actions"><button type="button" data-item-edit aria-label="${lt('editItem')}">✏️</button><button type="button" data-item-delete aria-label="${lt('removeItem')}">×</button></span>`;
+      const checkbox = row.querySelector('input');
+      checkbox.checked = Boolean(item.completed);
+      row.querySelector('span').textContent = item.title;
+      checkbox.addEventListener('change', async () => {
+        try {
+          await api(`/api/list-items/${item.id}`, { method: 'PUT', body: JSON.stringify({ completed: checkbox.checked }) });
+          item.completed = Number(checkbox.checked);
+          renderLists();
+        } catch (err) { checkbox.checked = !checkbox.checked; error.textContent = err.message; }
+      });
+      row.querySelector('[data-item-edit]').addEventListener('click', async () => {
+        const title = window.prompt(lt('itemPrompt'), item.title)?.trim();
+        if (!title || title === item.title) return;
+        try {
+          await api(`/api/list-items/${item.id}`, { method: 'PUT', body: JSON.stringify({ title }) });
+          item.title = title;
+          renderLists();
+        } catch (err) { error.textContent = err.message; }
+      });
+      row.querySelector('[data-item-delete]').addEventListener('click', async () => {
+        try {
+          await api(`/api/list-items/${item.id}`, { method: 'DELETE' });
+          await loadLists();
+        } catch (err) { error.textContent = err.message; }
+      });
+      itemList.appendChild(row);
+    });
+    card.querySelector('[data-list-rename]').addEventListener('click', async () => {
+      const title = window.prompt(lt('renamePrompt'), checklist.title)?.trim();
+      if (!title || title === checklist.title) return;
+      try {
+        await api(`/api/lists/${checklist.id}`, { method: 'PUT', body: JSON.stringify({ title }) });
+        await loadLists();
+      } catch (err) { error.textContent = err.message; }
+    });
+    card.querySelector('[data-list-delete]').addEventListener('click', async () => {
+      if (!window.confirm(lt('confirmRemove'))) return;
+      try {
+        await api(`/api/lists/${checklist.id}`, { method: 'DELETE' });
+        await loadLists();
+      } catch (err) { error.textContent = err.message; }
+    });
+    card.querySelector('.checklist-item-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const field = event.currentTarget.querySelector('input');
+      if (!field.value.trim()) return;
+      try {
+        await api(`/api/lists/${checklist.id}/items`, { method: 'POST', body: JSON.stringify({ title: field.value }) });
+        await loadLists();
+      } catch (err) { error.textContent = err.message; }
+    });
+    listsList.appendChild(card);
+  });
+}
+
+async function loadLists() {
+  try {
+    checklists = await api('/api/lists');
+    renderLists();
+  } catch (err) { error.textContent = err.message; }
+}
+
 function editRoutine(routine) {
   editingRoutine = routine;
   routineId.value = routine.id;
@@ -1018,6 +1128,17 @@ async function loadRoutineStats() {
 navToday.addEventListener('click', () => { currentDate = today; setView('day'); });
 navInbox.addEventListener('click', async () => { await setView('inbox'); setInboxSubView('inbox'); });
 navRoutines.addEventListener('click', () => setView('routines'));
+navLists.addEventListener('click', () => setView('lists'));
+listForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!listTitle.value.trim()) return;
+  try {
+    await api('/api/lists', { method: 'POST', body: JSON.stringify({ title: listTitle.value }) });
+    listTitle.value = '';
+    await loadLists();
+    announcer.textContent = language === 'ar' ? 'تم إنشاء القائمة.' : 'List created.';
+  } catch (err) { error.textContent = err.message; }
+});
 labelForm.addEventListener('submit', event => {
   event.preventDefault();
   const color = labelForm.querySelector('[name="label-color"]:checked').value;

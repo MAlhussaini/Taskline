@@ -149,6 +149,26 @@ def initialize_database() -> None:
         )
         db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_routine_occurrence ON tasks(routine_occurrence_id)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_routine_occurrences_date ON routine_occurrences(scheduled_date)")
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS checklists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 280),
+                workspace TEXT NOT NULL DEFAULT 'personal',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS checklist_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                checklist_id INTEGER NOT NULL,
+                title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 280),
+                completed INTEGER NOT NULL DEFAULT 0,
+                position INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(checklist_id) REFERENCES checklists(id)
+            )"""
+        )
+        db.execute("CREATE INDEX IF NOT EXISTS idx_checklist_items_list ON checklist_items(checklist_id, position)")
 
 
 def valid_date(value: object) -> str:
@@ -397,6 +417,15 @@ def routine_payload(db: sqlite3.Connection, routine: sqlite3.Row) -> dict:
     return result
 
 
+def checklist_payload(db: sqlite3.Connection, checklist: sqlite3.Row) -> dict:
+    result = dict(checklist)
+    result["items"] = [dict(row) for row in db.execute(
+        "SELECT id, checklist_id, title, completed, position, created_at FROM checklist_items WHERE checklist_id = ? ORDER BY position, id",
+        (checklist["id"],),
+    ).fetchall()]
+    return result
+
+
 class TodoHandler(BaseHTTPRequestHandler):
     def send_json(self, payload: object, status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -432,6 +461,14 @@ class TodoHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+            return
+        if path == "/api/lists":
+            with connect() as db:
+                checklists = [checklist_payload(db, row) for row in db.execute(
+                    "SELECT id, title, workspace, created_at FROM checklists WHERE workspace = ? ORDER BY id DESC",
+                    (workspace,),
+                ).fetchall()]
+            self.send_json(checklists)
             return
         if path == "/api/routines":
             with connect() as db:
@@ -640,6 +677,55 @@ class TodoHandler(BaseHTTPRequestHandler):
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
             return
+        if path == "/api/lists":
+            try:
+                title = str(self.read_json().get("title", "")).strip()
+                if not title or len(title) > 280:
+                    raise ValueError("Enter a list name between 1 and 280 characters")
+                with connect() as db:
+                    cursor = db.execute(
+                        "INSERT INTO checklists (title, workspace) VALUES (?, ?)",
+                        (title, workspace),
+                    )
+                    row = db.execute(
+                        "SELECT id, title, workspace, created_at FROM checklists WHERE id = ?",
+                        (cursor.lastrowid,),
+                    ).fetchone()
+                    result = checklist_payload(db, row)
+                self.send_json(result, 201)
+            except (ValueError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
+            return
+        list_item_match = re.fullmatch(r"/api/lists/(\d+)/items", path)
+        if list_item_match:
+            try:
+                checklist_id = int(list_item_match.group(1))
+                title = str(self.read_json().get("title", "")).strip()
+                if not title or len(title) > 280:
+                    raise ValueError("Enter an item between 1 and 280 characters")
+                with connect() as db:
+                    if db.execute(
+                        "SELECT 1 FROM checklists WHERE id = ? AND workspace = ?",
+                        (checklist_id, workspace),
+                    ).fetchone() is None:
+                        self.send_json({"error": "List not found"}, 404)
+                        return
+                    position = db.execute(
+                        "SELECT COALESCE(MAX(position), -1) + 1 FROM checklist_items WHERE checklist_id = ?",
+                        (checklist_id,),
+                    ).fetchone()[0]
+                    cursor = db.execute(
+                        "INSERT INTO checklist_items (checklist_id, title, position) VALUES (?, ?, ?)",
+                        (checklist_id, title, position),
+                    )
+                    row = db.execute(
+                        "SELECT id, checklist_id, title, completed, position, created_at FROM checklist_items WHERE id = ?",
+                        (cursor.lastrowid,),
+                    ).fetchone()
+                self.send_json(dict(row), 201)
+            except (ValueError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
+            return
         if path == "/api/routines":
             try:
                 payload = self.read_json()
@@ -846,6 +932,61 @@ class TodoHandler(BaseHTTPRequestHandler):
             workspace = valid_workspace(parse_qs(parsed_url.query).get("workspace", ["personal"])[0])
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
+            return
+        checklist_match = re.fullmatch(r"/api/lists/(\d+)", path)
+        if checklist_match:
+            try:
+                checklist_id = int(checklist_match.group(1))
+                title = str(self.read_json().get("title", "")).strip()
+                if not title or len(title) > 280:
+                    raise ValueError("Enter a list name between 1 and 280 characters")
+                with connect() as db:
+                    cursor = db.execute(
+                        "UPDATE checklists SET title = ? WHERE id = ? AND workspace = ?",
+                        (title, checklist_id, workspace),
+                    )
+                if cursor.rowcount == 0:
+                    self.send_json({"error": "List not found"}, 404)
+                else:
+                    self.send_json({"id": checklist_id, "title": title})
+            except (ValueError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
+            return
+        checklist_item_match = re.fullmatch(r"/api/list-items/(\d+)", path)
+        if checklist_item_match:
+            try:
+                item_id = int(checklist_item_match.group(1))
+                payload = self.read_json()
+                updates, values = [], []
+                if "completed" in payload:
+                    if not isinstance(payload["completed"], bool):
+                        raise ValueError("Invalid completion status")
+                    updates.append("completed = ?")
+                    values.append(int(payload["completed"]))
+                if "title" in payload:
+                    title = str(payload["title"]).strip()
+                    if not title or len(title) > 280:
+                        raise ValueError("Enter an item between 1 and 280 characters")
+                    updates.append("title = ?")
+                    values.append(title)
+                if not updates:
+                    raise ValueError("Nothing to update")
+                values.extend((item_id, workspace))
+                with connect() as db:
+                    cursor = db.execute(
+                        f"UPDATE checklist_items SET {', '.join(updates)} WHERE id = ? AND checklist_id IN (SELECT id FROM checklists WHERE workspace = ?)",
+                        values,
+                    )
+                    row = db.execute(
+                        "SELECT id, checklist_id, title, completed, position, created_at FROM checklist_items WHERE id = ?",
+                        (item_id,),
+                    ).fetchone() if cursor.rowcount else None
+                if row is None:
+                    self.send_json({"error": "List item not found"}, 404)
+                else:
+                    self.send_json(dict(row))
+            except (ValueError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
             return
         routine_match = re.fullmatch(r"/api/routines/(\d+)", path)
         if routine_match:
@@ -1151,6 +1292,39 @@ class TodoHandler(BaseHTTPRequestHandler):
             workspace = valid_workspace(parse_qs(parsed_url.query).get("workspace", ["personal"])[0])
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
+            return
+        checklist_match = re.fullmatch(r"/api/lists/(\d+)", path)
+        if checklist_match:
+            checklist_id = int(checklist_match.group(1))
+            with connect() as db:
+                existing = db.execute(
+                    "SELECT 1 FROM checklists WHERE id = ? AND workspace = ?",
+                    (checklist_id, workspace),
+                ).fetchone()
+                if existing is None:
+                    self.send_json({"error": "List not found"}, 404)
+                    return
+                db.execute("DELETE FROM checklist_items WHERE checklist_id = ?", (checklist_id,))
+                db.execute("DELETE FROM checklists WHERE id = ?", (checklist_id,))
+            self.send_json({"ok": True})
+            return
+        checklist_item_match = re.fullmatch(r"/api/list-items/(\d+)", path)
+        if checklist_item_match:
+            item_id = int(checklist_item_match.group(1))
+            with connect() as db:
+                row = db.execute(
+                    "SELECT checklist_id, position FROM checklist_items WHERE id = ? AND checklist_id IN (SELECT id FROM checklists WHERE workspace = ?)",
+                    (item_id, workspace),
+                ).fetchone()
+                if row is None:
+                    self.send_json({"error": "List item not found"}, 404)
+                    return
+                db.execute("DELETE FROM checklist_items WHERE id = ?", (item_id,))
+                db.execute(
+                    "UPDATE checklist_items SET position = position - 1 WHERE checklist_id = ? AND position > ?",
+                    (row[0], row[1]),
+                )
+            self.send_json({"ok": True})
             return
         routine_match = re.fullmatch(r"/api/routines/(\d+)", path)
         if routine_match:

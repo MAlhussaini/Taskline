@@ -8,8 +8,8 @@
   <meta name="description" content="A calm, focused checklist.">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png?v=1">
-  <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=3">
+  <script src="/app.js?v=3" defer></script>
 </head>
 <body>
   <header class="app-header">
@@ -135,14 +135,26 @@
         <p id="routine-chart-summary" class="history-range"></p>
       </section>
     </section>
+
+    <section id="lists-section" class="advanced-section lists-section">
+      <div class="lists-hero">
+        <div><h2 id="lists-heading">Lists</h2><p id="lists-description">Keep groceries and any reusable checklist in one place.</p></div>
+      </div>
+      <form id="list-form" class="list-form" autocomplete="off">
+        <label class="sr-only" for="list-title">List name</label>
+        <input id="list-title" maxlength="280" placeholder="Groceries" required>
+        <button id="list-create" type="submit">Create list</button>
+      </form>
+      <div id="lists-list" class="lists-list" aria-live="polite"></div>
+    </section>
   </main>
 
   <nav class="bottom-nav" aria-label="Main navigation">
     <button id="nav-today" type="button" class="active" aria-current="page"><span aria-hidden="true">☑</span>Today</button>
     <button id="nav-inbox" type="button"><span aria-hidden="true">📥</span>Inbox</button>
     <button id="nav-routines" type="button"><span aria-hidden="true">🔁</span>Routines</button>
+    <button id="nav-lists" type="button"><span aria-hidden="true">📋</span>Lists</button>
     <button id="nav-settings" type="button" aria-disabled="true"><span aria-hidden="true">⚙</span>Settings</button>
-    <span class="nav-spacer" aria-hidden="true"></span>
   </nav>
   <dialog id="label-dialog" class="label-dialog">
     <form id="label-form" method="dialog">
