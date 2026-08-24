@@ -338,6 +338,18 @@ async function api(path, options = {}) {
 const escapeHtml = value => value.replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 const grip = () => `<span class="grip" aria-label="${language === 'ar' ? 'اسحب لإعادة الترتيب' : 'Drag to reorder'}">${'<i></i>'.repeat(6)}</span>`;
 
+function taskDisplayGroup(task) {
+  if (task.completed) return 2;
+  return task.starred ? 0 : 1;
+}
+
+function orderTasksForDisplay(source) {
+  return source
+    .map((task, savedIndex) => ({ task, savedIndex }))
+    .sort((left, right) => taskDisplayGroup(left.task) - taskDisplayGroup(right.task) || left.savedIndex - right.savedIndex)
+    .map(entry => entry.task);
+}
+
 function render() {
   syncLocalToday();
   list.innerHTML = '';
@@ -349,7 +361,8 @@ function render() {
     labelFilter.value = labels.includes(selected) ? selected : '';
     activeLabel = labelFilter.value;
   }
-  const visibleTasks = activeLabel && currentView === 'inbox' ? tasks.filter(task => task.label === activeLabel) : tasks;
+  const filteredTasks = activeLabel && currentView === 'inbox' ? tasks.filter(task => task.label === activeLabel) : tasks;
+  const visibleTasks = orderTasksForDisplay(filteredTasks);
   visibleTasks.forEach((task, index) => {
     const item = document.createElement('li');
     item.className = `task${task.completed ? ' completed' : ''}${task.parent_id ? ' child-task' : ''}${task.routine_occurrence_id ? ' routine-task' : ''}`;
@@ -380,8 +393,8 @@ function render() {
         <button type="button" data-outlist aria-label="${language === 'ar' ? 'جعل المهمة مستقلة' : 'Make task independent'}" ${task.parent_id ? '' : 'disabled'}>✉️</button>
       </span>
       <span class="order-controls">
-        <button type="button" data-move="up" aria-label="Move ${escapeHtml(task.title)} up" ${index === 0 ? 'disabled' : ''}>↑</button>
-        <button type="button" data-move="down" aria-label="Move ${escapeHtml(task.title)} down" ${index === tasks.length - 1 ? 'disabled' : ''}>↓</button>
+        <button type="button" data-move="up" aria-label="Move ${escapeHtml(task.title)} up" ${index === 0 || taskDisplayGroup(visibleTasks[index - 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↑</button>
+        <button type="button" data-move="down" aria-label="Move ${escapeHtml(task.title)} down" ${index === visibleTasks.length - 1 || taskDisplayGroup(visibleTasks[index + 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↓</button>
       </span>`;
     item.querySelector('.task-title').textContent = task.title;
     list.appendChild(item);
@@ -394,7 +407,17 @@ function render() {
 
 function syncTasksFromDom() {
   const order = [...list.querySelectorAll('.task')].map(item => Number(item.dataset.id));
-  tasks.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  const visibleIds = new Set(order);
+  const byId = new Map(tasks.map(task => [task.id, task]));
+  const reordered = [...tasks];
+  for (let group = 0; group <= 2; group += 1) {
+    const slots = tasks.map((task, index) => ({ task, index }))
+      .filter(entry => visibleIds.has(entry.task.id) && taskDisplayGroup(entry.task) === group)
+      .map(entry => entry.index);
+    const groupTasks = order.map(id => byId.get(id)).filter(task => task && taskDisplayGroup(task) === group);
+    slots.forEach((slot, index) => { reordered[slot] = groupTasks[index]; });
+  }
+  tasks = reordered;
 }
 
 function placeDraggedItem(target, clientY) {
@@ -628,11 +651,17 @@ list.addEventListener('click', event => {
   if (remove) { deleteTask(tasks.find(task => task.id === Number(remove.closest('.task').dataset.id))); return; }
   const button = event.target.closest('[data-move]');
   if (!button) return;
-  const index = tasks.findIndex(task => task.id === Number(button.closest('.task').dataset.id));
-  const next = button.dataset.move === 'up' ? index - 1 : index + 1;
-  if (next < 0 || next >= tasks.length) return;
-  [tasks[index], tasks[next]] = [tasks[next], tasks[index]];
-  const title = tasks[next].title; render(); saveOrder(`${title} moved to position ${next + 1}.`);
+  const item = button.closest('.task');
+  const sibling = button.dataset.move === 'up' ? item.previousElementSibling : item.nextElementSibling;
+  if (!sibling) return;
+  const task = tasks.find(entry => entry.id === Number(item.dataset.id));
+  const siblingTask = tasks.find(entry => entry.id === Number(sibling.dataset.id));
+  if (taskDisplayGroup(task) !== taskDisplayGroup(siblingTask)) return;
+  if (button.dataset.move === 'up') list.insertBefore(item, sibling);
+  else list.insertBefore(sibling, item);
+  syncTasksFromDom();
+  render();
+  saveOrder(`${task.title} moved.`);
 });
 
 list.addEventListener('dragstart', event => {
