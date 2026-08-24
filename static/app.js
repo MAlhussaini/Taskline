@@ -87,6 +87,8 @@ let inboxSubView = 'inbox';
 let activeLabel = '';
 let language = localStorage.getItem('taskline-language') || 'en';
 let workspace = localStorage.getItem('taskline-workspace') === 'work' ? 'work' : 'personal';
+// These defaults are centralized so they can move into the Settings screen later.
+const workspaceDayStartHours = { personal: 3, work: 0 };
 let dreams = [];
 let routines = [];
 let checklists = [];
@@ -233,7 +235,7 @@ function applyLanguage() {
   if (inboxSubView === 'dreams') loadDreams();
   if (inboxSubView === 'history') loadHistory();
 }
-let today = toISO(new Date());
+let today = effectiveToday();
 let currentDate = today;
 
 function toISO(value) {
@@ -254,8 +256,14 @@ function shifted(value, days) {
   return toISO(result);
 }
 
-function syncLocalToday() {
-  const nextToday = toISO(new Date());
+function effectiveToday(now = new Date(), targetWorkspace = workspace) {
+  const adjusted = new Date(now.getTime());
+  adjusted.setHours(adjusted.getHours() - workspaceDayStartHours[targetWorkspace]);
+  return toISO(adjusted);
+}
+
+function syncLocalToday(now = new Date()) {
+  const nextToday = effectiveToday(now);
   if (nextToday === today) return false;
   const wasShowingToday = currentDate === today;
   today = nextToday;
@@ -1229,6 +1237,7 @@ languageToggle.addEventListener('click', () => {
 workspaceToggle.addEventListener('click', async () => {
   workspace = workspace === 'personal' ? 'work' : 'personal';
   localStorage.setItem('taskline-workspace', workspace);
+  today = effectiveToday();
   currentDate = today;
   activeLabel = '';
   savedLabels = [];
