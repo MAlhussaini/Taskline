@@ -14,6 +14,7 @@ test("provides an installable mobile manifest and valid icons", async () => {
   const manifest = JSON.parse(await readFile(new URL("manifest.webmanifest", staticRoot), "utf8"));
 
   assert.equal(manifest.name, "Taskline");
+  assert.equal(manifest.id, "/taskline-pwa");
   assert.equal(manifest.start_url, "/");
   assert.equal(manifest.scope, "/");
   assert.equal(manifest.display, "standalone");

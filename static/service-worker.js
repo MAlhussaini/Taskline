@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'taskline-shell-v1';
+const SHELL_CACHE = 'taskline-shell-v2';
 const APP_SHELL = [
   '/',
   '/styles.css?v=9',
