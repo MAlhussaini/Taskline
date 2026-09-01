@@ -75,6 +75,10 @@ const listTitle = document.querySelector('#list-title');
 const listsList = document.querySelector('#lists-list');
 const listsSection = document.querySelector('#lists-section');
 const listsEditToggle = document.querySelector('#lists-edit-toggle');
+const installApp = document.querySelector('#install-app');
+const installDialog = document.querySelector('#install-dialog');
+const installDialogTitle = document.querySelector('#install-dialog-title');
+const installDialogMessage = document.querySelector('#install-dialog-message');
 
 let tasks = [];
 let draggedId = null;
@@ -95,6 +99,7 @@ let dreams = [];
 let routines = [];
 let checklists = [];
 let listsEditing = false;
+let deferredInstallPrompt = null;
 let editingRoutine = null;
 let savedLabels = [];
 const copy = {
@@ -114,6 +119,59 @@ const listCopy = {
   ar: { lists:'القوائم', intro:'احتفظ بالمقاضي وأي قائمة أخرى تحتاجها في مكان واحد.', name:'اسم القائمة', namePlaceholder:'المقاضي', create:'إنشاء قائمة', editLists:'تحرير', doneEditing:'تم', noLists:'لا توجد قوائم بعد. أنشئ قائمتك الأولى أعلاه.', empty:'لا توجد عناصر بعد.', itemPlaceholder:'أضف عنصرًا…', addItem:'إضافة', rename:'تعديل اسم القائمة', editItem:'تعديل العنصر', expand:'فتح القائمة', collapse:'طي القائمة', moveUp:'نقل القائمة إلى أعلى', moveDown:'نقل القائمة إلى أسفل', remove:'حذف القائمة', removeItem:'حذف العنصر', completed:'مكتمل', renamePrompt:'اسم القائمة الجديد', itemPrompt:'تعديل العنصر', confirmRemove:'حذف هذه القائمة وجميع عناصرها؟' },
 };
 const lt = key => listCopy[language][key];
+const pwaCopy = {
+  en: { install:'Install Taskline', kicker:'Install app', title:'Add Taskline to your phone', iosHelp:'Tap the Share button, then choose Add to Home Screen.', browserHelp:'Open your browser menu, then choose Install app or Add to Home Screen.', close:'Got it' },
+  ar: { install:'تثبيت Taskline', kicker:'تثبيت التطبيق', title:'أضف Taskline إلى جوالك', iosHelp:'اضغط زر المشاركة، ثم اختر «إضافة إلى الشاشة الرئيسية».', browserHelp:'افتح قائمة المتصفح، ثم اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».', close:'حسنًا' },
+};
+const pt = key => pwaCopy[language][key];
+
+function isIosDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function isStandaloneApp() {
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+
+function refreshInstallButton() {
+  installApp.hidden = isStandaloneApp() || (!deferredInstallPrompt && !isIosDevice());
+}
+
+function setupPwa() {
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+        .then(registration => registration.update())
+        .catch(() => {});
+    });
+  }
+
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    refreshInstallButton();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    installApp.hidden = true;
+    announcer.textContent = language === 'ar' ? 'تم تثبيت Taskline.' : 'Taskline installed.';
+  });
+
+  installApp.addEventListener('click', async () => {
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      refreshInstallButton();
+      return;
+    }
+    installDialogMessage.textContent = isIosDevice() ? pt('iosHelp') : pt('browserHelp');
+    installDialog.showModal();
+  });
+
+  refreshInstallButton();
+}
 
 function applyWorkspace() {
   const arabic = language === 'ar';
@@ -138,6 +196,13 @@ function applyLanguage() {
   document.documentElement.dir = arabic ? 'rtl' : 'ltr';
   languageToggle.textContent = t('language');
   languageToggle.setAttribute('aria-label', arabic ? 'تغيير اللغة' : 'Change language');
+  installApp.setAttribute('aria-label', pt('install'));
+  installApp.title = pt('install');
+  document.querySelector('#install-dialog-kicker').textContent = pt('kicker');
+  installDialogTitle.textContent = pt('title');
+  installDialogMessage.textContent = isIosDevice() ? pt('iosHelp') : pt('browserHelp');
+  document.querySelector('#install-dialog .dialog-close').setAttribute('aria-label', arabic ? 'إغلاق' : 'Close');
+  document.querySelector('#install-dialog-close').textContent = pt('close');
   applyWorkspace();
   document.querySelector('label[for="task-input"]').textContent = arabic ? 'ماذا تريد أن تنجز؟' : 'What needs doing?';
   form.querySelector('.add-button').setAttribute('aria-label', arabic ? 'إضافة مهمة' : 'Add task');
@@ -1405,5 +1470,6 @@ setInterval(async () => {
 
 resetRoutineForm();
 renderCalendar();
+setupPwa();
 applyLanguage();
 Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);

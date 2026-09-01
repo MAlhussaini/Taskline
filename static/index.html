@@ -3,18 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f5f3ed">
+  <meta name="theme-color" content="#28553f">
+  <meta name="color-scheme" content="light">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Taskline">
   <title>Taskline</title>
   <meta name="description" content="A calm, focused checklist.">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png?v=1">
-  <link rel="stylesheet" href="/styles.css?v=8">
-  <script src="/app.js?v=8" defer></script>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css?v=9">
+  <script src="/app.js?v=9" defer></script>
 </head>
 <body>
   <header class="app-header">
     <a class="brand" href="/" aria-label="Taskline home"><span>✓</span> <strong id="brand-title">Taskline</strong></a>
     <div class="header-actions">
+      <button id="install-app" class="header-action install-app" type="button" aria-label="Install Taskline" title="Install Taskline" hidden>⬇</button>
       <span id="workspace-indicator" class="workspace-indicator" role="status" aria-label="Personal space" title="Personal space">🏡</span>
       <button id="workspace-toggle" class="header-action workspace-toggle" type="button" aria-label="Switch to Work" title="Switch to Work">💼</button>
       <button id="language-toggle" class="header-action" type="button" aria-label="Change language">العربية</button>
@@ -203,6 +210,13 @@
       <details><summary>Add an image</summary><input id="dream-image" type="file" accept="image/png,image/jpeg,image/webp"><img id="dream-preview" alt="Dream image" hidden></details>
       <details open><summary>Inner tasks</summary><div id="dream-items" class="dream-items"></div><div class="inner-task-add"><input id="dream-item-title" maxlength="280" placeholder="Add a small step…"><button id="add-dream-item" type="button">Add</button></div></details>
       <div class="dialog-actions"><button class="save-label" type="submit">Save details</button></div>
+    </form>
+  </dialog>
+  <dialog id="install-dialog" class="label-dialog install-dialog">
+    <form method="dialog">
+      <div class="dialog-heading"><div><small id="install-dialog-kicker">Install app</small><h2 id="install-dialog-title">Add Taskline to your phone</h2></div><button type="submit" class="dialog-close" aria-label="Close">×</button></div>
+      <p id="install-dialog-message">Open your browser menu, then choose Add to Home Screen.</p>
+      <div class="dialog-actions"><button id="install-dialog-close" class="save-label" type="submit">Got it</button></div>
     </form>
   </dialog>
   <div id="announcer" class="sr-only" aria-live="assertive"></div>

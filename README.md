@@ -12,3 +12,11 @@ A responsive personal planning app built with Python's standard library. It incl
 To use it from a phone or tablet on the same Wi-Fi network, open `http://YOUR-PC-IP:8000` on that device. Windows may ask you to allow Python through the firewall the first time.
 
 Tasks are saved in `tasks.db`, which is created automatically beside `app.py`.
+
+## Install on a phone
+
+Taskline includes a web app manifest, mobile icons, standalone display support, and an offline app shell. It must be opened over HTTPS before a browser can install it.
+
+On this Taskline PC, connect the phone to the same Tailscale network and open `https://debian.tail3c6613.ts.net:8443/`. Use the install button in Taskline or the browser's **Install app / Add to Home Screen** command. On iPhone or iPad, open the Share menu and choose **Add to Home Screen**.
+
+The interface shell can open offline after the first successful visit. Creating or changing tasks still requires a connection to the Taskline PC because all personal data stays in its local SQLite database.
