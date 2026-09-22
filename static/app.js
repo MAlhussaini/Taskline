@@ -285,6 +285,7 @@ function applyLanguage() {
   document.querySelector('#routine-heading').textContent = rt('routines');
   document.querySelector('#routine-description').textContent = rt('routineDesc');
   routineStatsToggle.querySelector('span').textContent = rt('statistics');
+  routineStatsToggle.setAttribute('aria-label', rt('statistics'));
   document.querySelector('#routine-title-label').textContent = rt('routine');
   routineTitle.placeholder = arabic ? 'مثال: إخراج القمامة' : 'For example: Take out the trash';
   document.querySelector('#routine-start-label').textContent = rt('starts');
@@ -472,6 +473,11 @@ function planFromWheels(year, quarter, month) {
 
 function renderCalendar() {
   const locale = language === 'ar' ? 'ar' : 'en';
+  if (currentView === 'lists') {
+    dayTitle.textContent = lt('lists');
+    document.querySelector('.intro').textContent = lt('intro');
+    return;
+  }
   if (currentView === 'routines') {
     dayTitle.textContent = rt('routines');
     document.querySelector('.intro').textContent = rt('routineIntro');
@@ -558,6 +564,10 @@ function render() {
     const transferText = currentView === 'inbox' ? (language === 'ar' ? 'نقل إلى اليوم' : 'Move to today') : (language === 'ar' ? 'نقل إلى الحافظة' : 'Move to inbox');
     item.innerHTML = `<button type="button" class="check-button" data-check aria-label="${language === 'ar' ? (task.completed ? 'جعل المهمة غير مكتملة' : 'إكمال المهمة') : `Mark ${escapeHtml(task.title)} ${task.completed ? 'incomplete' : 'complete'}`}" aria-pressed="${Boolean(task.completed)}"><span aria-hidden="true">✓</span></button>
       <span class="task-copy"><span class="task-title"></span><span class="task-meta">${label}${plan}${routineBadge}${carriedBadge}${followBadge}${missedBadge}</span></span>
+      <button type="button" class="star-button${task.starred ? ' starred' : ''}" data-star aria-label="${language === 'ar' ? (task.starred ? 'إزالة النجمة' : 'تمييز بنجمة') : `${task.starred ? 'Remove star from' : 'Star'} ${escapeHtml(task.title)}`}" aria-pressed="${Boolean(task.starred)}"><span aria-hidden="true">★</span></button>
+      <button type="button" class="task-more" data-task-more aria-label="${language === 'ar' ? 'أدوات المهمة' : 'Task actions'}" aria-expanded="false" aria-controls="task-tools-${task.id}"><span aria-hidden="true">•••</span></button>
+      ${grip()}
+      <span class="task-tools" id="task-tools-${task.id}" hidden>
       <span class="task-actions">
         <button type="button" class="edit-button" data-edit aria-label="${language === 'ar' ? 'تعديل المهمة' : `Edit ${escapeHtml(task.title)}`} "><span aria-hidden="true">✏️</span></button>
         <button type="button" class="subtask-button" data-add-subtask aria-label="${task.parent_id ? (language === 'ar' ? 'المهام الفرعية بمستوى واحد فقط' : 'Subtasks are limited to one level') : (language === 'ar' ? 'إضافة مهمة فرعية' : 'Add subtask')}" ${task.parent_id ? 'disabled' : ''}><span aria-hidden="true">➕</span></button>
@@ -566,17 +576,31 @@ function render() {
         ${task.routine_occurrence_id ? '' : `<button type="button" class="transfer-button" data-transfer aria-label="${transferText}: ${escapeHtml(task.title)}"><span aria-hidden="true">${transferIcon}</span></button>`}
         <button type="button" class="delete-button" data-delete aria-label="${language === 'ar' ? 'حذف المهمة' : `Delete ${escapeHtml(task.title)}`} "><span aria-hidden="true">🗑️</span></button>
       </span>
-      <button type="button" class="star-button${task.starred ? ' starred' : ''}" data-star aria-label="${language === 'ar' ? (task.starred ? 'إزالة النجمة' : 'تمييز بنجمة') : `${task.starred ? 'Remove star from' : 'Star'} ${escapeHtml(task.title)}`}" aria-pressed="${Boolean(task.starred)}"><span aria-hidden="true">★</span></button>
-      ${grip()}
       <span class="hierarchy-actions">
         <button type="button" data-enlist aria-label="${language === 'ar' ? 'جعلها تابعة للمهمة السابقة' : 'Make task a child of the previous task'}" ${index === 0 || activeLabel || task.parent_id ? 'disabled' : ''}>📨</button>
         <button type="button" data-outlist aria-label="${language === 'ar' ? 'جعل المهمة مستقلة' : 'Make task independent'}" ${task.parent_id ? '' : 'disabled'}>✉️</button>
       </span>
       <span class="order-controls">
-        <button type="button" data-move="up" aria-label="Move ${escapeHtml(task.title)} up" ${index === 0 || taskDisplayGroup(visibleTasks[index - 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↑</button>
-        <button type="button" data-move="down" aria-label="Move ${escapeHtml(task.title)} down" ${index === visibleTasks.length - 1 || taskDisplayGroup(visibleTasks[index + 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↓</button>
-      </span>`;
+        <button type="button" data-move="up" aria-label="${language === 'ar' ? 'نقل لأعلى' : 'Move up'}" ${index === 0 || taskDisplayGroup(visibleTasks[index - 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↑</button>
+        <button type="button" data-move="down" aria-label="${language === 'ar' ? 'نقل لأسفل' : 'Move down'}" ${index === visibleTasks.length - 1 || taskDisplayGroup(visibleTasks[index + 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↓</button>
+      </span></span>`;
     item.querySelector('.task-title').textContent = task.title;
+    const actionLabels = [
+      ['[data-edit]', 'Edit', 'تعديل'], ['[data-add-subtask]', 'Subtask', 'مهمة فرعية'],
+      ['[data-make-routine]', 'Repeat', 'تكرار'], ['[data-label]', 'Label', 'وسم'],
+      ['[data-transfer]', currentView === 'inbox' ? 'To today' : 'To inbox', currentView === 'inbox' ? 'إلى اليوم' : 'إلى الحافظة'],
+      ['[data-delete]', 'Delete', 'حذف'], ['[data-enlist]', 'Nest task', 'جعلها فرعية'],
+      ['[data-outlist]', 'Unnest task', 'جعلها مستقلة'], ['[data-move="up"]', 'Move up', 'نقل لأعلى'],
+      ['[data-move="down"]', 'Move down', 'نقل لأسفل'],
+    ];
+    actionLabels.forEach(([selector, en, ar]) => {
+      const button = item.querySelector(selector);
+      if (!button) return;
+      const caption = document.createElement('span');
+      caption.className = 'action-caption';
+      caption.textContent = language === 'ar' ? ar : en;
+      button.appendChild(caption);
+    });
     list.appendChild(item);
   });
   const remaining = visibleTasks.filter(task => !task.completed).length;
@@ -799,7 +823,28 @@ form.addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 
+function setTaskTools(item, expanded) {
+  list.querySelectorAll('.task').forEach(row => {
+    const open = row === item && expanded;
+    const panel = row.querySelector('.task-tools');
+    const toggle = row.querySelector('[data-task-more]');
+    if (!open && panel.contains(document.activeElement)) toggle.focus();
+    panel.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+}
+
+list.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  const item = event.target.closest('.task');
+  if (!item) return;
+  setTaskTools(item, false);
+  item.querySelector('[data-task-more]').focus();
+});
+
 list.addEventListener('click', event => {
+  const more = event.target.closest('[data-task-more]');
+  if (more) { setTaskTools(more.closest('.task'), more.getAttribute('aria-expanded') !== 'true'); return; }
   const check = event.target.closest('[data-check]');
   if (check) { toggleTask(tasks.find(task => task.id === Number(check.closest('.task').dataset.id))); return; }
   const edit = event.target.closest('[data-edit]');
@@ -867,7 +912,7 @@ list.addEventListener('pointerup', event => {
   syncTasksFromDom(); draggedId = null; render(); saveOrder('Task order updated.');
 });
 
-// On phones, reveal delete with a direction-aware horizontal swipe.
+// Swiping remains an alternative to the visible task-actions button.
 list.addEventListener('pointerdown', event => {
   if (event.pointerType === 'mouse' || event.target.closest('button, .grip')) return;
   const item = event.target.closest('.task');
@@ -887,15 +932,8 @@ list.addEventListener('pointerup', event => {
   const { item, x, y } = swipeStart;
   const dx = event.clientX - x;
   const dy = event.clientY - y;
-  const rtl = document.documentElement.dir === 'rtl' || getComputedStyle(document.body).direction === 'rtl';
   const horizontal = Math.abs(dx) > Math.abs(dy);
-  const revealActions = horizontal && (rtl ? dx < -48 : dx > 48);
-  const revealHierarchy = horizontal && (rtl ? dx > 48 : dx < -48);
-  list.querySelectorAll('.task.swipe-actions,.task.swipe-hierarchy').forEach(task => {
-    if (task !== item || revealActions || revealHierarchy) task.classList.remove('swipe-actions', 'swipe-hierarchy');
-  });
-  if (revealActions) { item.classList.remove('swipe-hierarchy'); item.classList.add('swipe-actions'); }
-  if (revealHierarchy) { item.classList.remove('swipe-actions'); item.classList.add('swipe-hierarchy'); }
+  if (horizontal && Math.abs(dx) > 48) setTaskTools(item, true);
   swipeStart = null;
 });
 

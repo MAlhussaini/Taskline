@@ -1,9 +1,9 @@
-const SHELL_CACHE = 'taskline-shell-v4';
+const SHELL_CACHE = 'taskline-shell-v5';
 const APP_SHELL = [
   '/',
-  '/styles.css?v=11',
+  '/styles.css?v=12',
   '/calendar-utils.js?v=1',
-  '/app.js?v=11',
+  '/app.js?v=12',
   '/manifest.webmanifest',
   '/icon-192.png',
   '/icon-512.png',

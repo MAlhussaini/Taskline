@@ -14,9 +14,9 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=11">
+  <link rel="stylesheet" href="/styles.css?v=12">
   <script src="/calendar-utils.js?v=1" defer></script>
-  <script src="/app.js?v=11" defer></script>
+  <script src="/app.js?v=12" defer></script>
 </head>
 <body>
   <header class="app-header">
@@ -30,6 +30,7 @@
   </header>
 
   <main class="shell">
+    <p id="form-error" class="error app-error" role="alert"></p>
     <header class="page-heading">
       <div class="heading-topline date-only">
         <button id="month-picker" class="month-picker" type="button" aria-haspopup="dialog" aria-expanded="false"><span id="month-label">July 2026</span> <span aria-hidden="true">⌄</span></button>
@@ -61,10 +62,9 @@
     <form id="task-form" class="composer task-workspace" autocomplete="off">
       <label class="sr-only" for="task-input">What needs doing?</label>
       <div class="input-row">
-        <input id="task-input" name="task" maxlength="280" placeholder="Add a task…" required autofocus>
+        <input id="task-input" name="task" maxlength="280" placeholder="Add a task…" required>
         <button class="add-button" type="submit" aria-label="Add task"><span aria-hidden="true">＋</span><span class="add-label">Add</span></button>
       </div>
-      <p id="form-error" class="error" role="alert"></p>
     </form>
 
     <section class="tasks-section task-workspace" aria-labelledby="tasks-heading">
