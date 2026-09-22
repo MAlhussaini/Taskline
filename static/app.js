@@ -9,7 +9,10 @@ const announcer = document.querySelector('#announcer');
 const dayTitle = document.querySelector('#day-title');
 const monthLabel = document.querySelector('#month-label');
 const monthPicker = document.querySelector('#month-picker');
-const datePicker = document.querySelector('#date-picker');
+const monthDialog = document.querySelector('#month-dialog');
+const monthDialogTitle = document.querySelector('#month-dialog-title');
+const monthWeekdays = document.querySelector('#month-weekdays');
+const monthGrid = document.querySelector('#month-grid');
 const todayButton = document.querySelector('#today-button');
 const weekStrip = document.querySelector('#week-strip');
 const overdueSection = document.querySelector('#overdue-section');
@@ -100,6 +103,7 @@ let routines = [];
 let checklists = [];
 let listsEditing = false;
 let deferredInstallPrompt = null;
+let calendarCursor = null;
 let editingRoutine = null;
 let savedLabels = [];
 const copy = {
@@ -124,6 +128,11 @@ const pwaCopy = {
   ar: { install:'تثبيت Taskline', kicker:'تثبيت التطبيق', title:'أضف Taskline إلى جوالك', iosHelp:'اضغط زر المشاركة، ثم اختر «إضافة إلى الشاشة الرئيسية».', browserHelp:'افتح قائمة المتصفح، ثم اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».', close:'حسنًا' },
 };
 const pt = key => pwaCopy[language][key];
+const calendarCopy = {
+  en: { open:'Open full month', kicker:'Full month', previous:'Previous month', next:'Next month', choose:'Choose a day', legend:'Day status legend', incomplete:'Needs attention', complete:'All complete', noTasks:'No tasks', close:'Close', today:'Today' },
+  ar: { open:'فتح الشهر كاملًا', kicker:'الشهر كاملًا', previous:'الشهر السابق', next:'الشهر التالي', choose:'اختر يومًا', legend:'دليل حالة الأيام', incomplete:'يحتاج إلى إنجاز', complete:'مكتمل بالكامل', noTasks:'لا توجد مهام', close:'إغلاق', today:'اليوم' },
+};
+const ct = key => calendarCopy[language][key];
 
 function isIosDevice() {
   return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -196,6 +205,18 @@ function applyLanguage() {
   document.documentElement.dir = arabic ? 'rtl' : 'ltr';
   languageToggle.textContent = t('language');
   languageToggle.setAttribute('aria-label', arabic ? 'تغيير اللغة' : 'Change language');
+  monthPicker.setAttribute('aria-label', ct('open'));
+  document.querySelector('#month-dialog-kicker').textContent = ct('kicker');
+  document.querySelector('#month-dialog-previous').setAttribute('aria-label', ct('previous'));
+  document.querySelector('#month-dialog-next').setAttribute('aria-label', ct('next'));
+  document.querySelector('#month-dialog-previous').textContent = arabic ? '›' : '‹';
+  document.querySelector('#month-dialog-next').textContent = arabic ? '‹' : '›';
+  monthGrid.setAttribute('aria-label', ct('choose'));
+  document.querySelector('.month-legend').setAttribute('aria-label', ct('legend'));
+  document.querySelector('#month-legend-incomplete').textContent = ct('incomplete');
+  document.querySelector('#month-legend-complete').textContent = ct('complete');
+  document.querySelector('#month-dialog-close').textContent = ct('close');
+  document.querySelector('#month-dialog-today').textContent = ct('today');
   installApp.setAttribute('aria-label', pt('install'));
   installApp.title = pt('install');
   document.querySelector('#install-dialog-kicker').textContent = pt('kicker');
@@ -211,7 +232,6 @@ function applyLanguage() {
   planningYear.setAttribute('aria-label', arabic ? 'السنة' : 'Year'); planningQuarter.setAttribute('aria-label', arabic ? 'الربع' : 'Quarter'); planningMonth.setAttribute('aria-label', arabic ? 'الشهر' : 'Month');
   editPlanYear.setAttribute('aria-label', arabic ? 'السنة المخططة' : 'Planned year'); editPlanQuarter.setAttribute('aria-label', arabic ? 'الربع المخطط' : 'Planned quarter'); editPlanMonth.setAttribute('aria-label', arabic ? 'الشهر المخطط' : 'Planned month');
   labelFilter.setAttribute('aria-label', arabic ? 'تصفية حسب الوسم' : 'Filter by label');
-  datePicker.setAttribute('aria-label', arabic ? 'اختر تاريخًا' : 'Choose a date');
   document.querySelector('.week-nav').setAttribute('aria-label', arabic ? 'اختر يومًا' : 'Choose a day');
   document.querySelector('#previous-day').setAttribute('aria-label', arabic ? 'اليوم السابق' : 'Previous day');
   document.querySelector('#next-day').setAttribute('aria-label', arabic ? 'اليوم التالي' : 'Next day');
@@ -325,6 +345,58 @@ function shifted(value, days) {
   return toISO(result);
 }
 
+function renderMonthCalendar() {
+  if (!calendarCursor) calendarCursor = TasklineCalendar.monthStart(currentDate);
+  const locale = language === 'ar' ? 'ar' : 'en';
+  const cursor = fromISO(calendarCursor);
+  const cursorMonth = calendarCursor.slice(0, 7);
+  monthDialogTitle.textContent = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(cursor);
+  monthWeekdays.innerHTML = '';
+  const firstSunday = new Date(2026, 7, 2);
+  for (let index = 0; index < 7; index += 1) {
+    const label = document.createElement('span');
+    const weekday = new Date(firstSunday.getFullYear(), firstSunday.getMonth(), firstSunday.getDate() + index);
+    label.textContent = new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(weekday);
+    monthWeekdays.appendChild(label);
+  }
+
+  monthGrid.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  TasklineCalendar.monthGrid(calendarCursor).forEach(iso => {
+    const value = fromISO(iso);
+    const hasTasks = activeDays.has(iso);
+    const allComplete = completedDays.has(iso);
+    const statusText = hasTasks ? ct(allComplete ? 'complete' : 'incomplete') : ct('noTasks');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `month-day${iso.slice(0, 7) === cursorMonth ? '' : ' outside-month'}${iso === today ? ' today' : ''}${iso === currentDate ? ' selected' : ''}${hasTasks ? ' has-tasks' : ''}${allComplete ? ' all-complete' : ''}`;
+    button.dataset.date = iso;
+    button.setAttribute('role', 'gridcell');
+    button.setAttribute('aria-selected', String(iso === currentDate));
+    if (iso === today) button.setAttribute('aria-current', 'date');
+    button.setAttribute('aria-label', `${new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(value)} — ${statusText}`);
+    button.innerHTML = `<span>${new Intl.DateTimeFormat(locale, { day: 'numeric' }).format(value)}</span><i aria-hidden="true"></i>`;
+    fragment.appendChild(button);
+  });
+  monthGrid.appendChild(fragment);
+}
+
+async function openMonthCalendar() {
+  calendarCursor = TasklineCalendar.monthStart(currentDate);
+  renderMonthCalendar();
+  monthPicker.setAttribute('aria-expanded', 'true');
+  monthDialog.showModal();
+  await loadActiveDays(TasklineCalendar.monthEnd(calendarCursor));
+}
+
+async function moveCalendarMonth(amount) {
+  const cursor = fromISO(calendarCursor);
+  cursor.setMonth(cursor.getMonth() + amount, 1);
+  calendarCursor = TasklineCalendar.monthStart(toISO(cursor));
+  renderMonthCalendar();
+  await loadActiveDays(TasklineCalendar.monthEnd(calendarCursor));
+}
+
 function effectiveToday(now = new Date(), targetWorkspace = workspace) {
   const adjusted = new Date(now.getTime());
   adjusted.setHours(adjusted.getHours() - workspaceDayStartHours[targetWorkspace]);
@@ -388,7 +460,6 @@ function renderCalendar() {
   monthLabel.textContent = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(selected);
   dayTitle.textContent = currentDate === today ? t('today') : new Intl.DateTimeFormat(locale, { weekday: 'long', month: 'short', day: 'numeric' }).format(selected);
   todayButton.hidden = currentDate === today;
-  datePicker.value = currentDate;
   weekStrip.innerHTML = '';
   for (let offset = -3; offset <= 3; offset += 1) {
     const iso = shifted(currentDate, offset);
@@ -401,6 +472,7 @@ function renderCalendar() {
     button.innerHTML = `<span>${new Intl.DateTimeFormat(locale, { weekday: 'narrow' }).format(value)}</span><strong>${value.getDate()}</strong><i></i>`;
     weekStrip.appendChild(button);
   }
+  if (monthDialog.open) renderMonthCalendar();
 }
 
 async function api(path, options = {}) {
@@ -522,9 +594,9 @@ async function loadTasks() {
   catch { error.textContent = 'Could not load your tasks. Please refresh.'; }
 }
 
-async function loadActiveDays() {
+async function loadActiveDays(through = TasklineCalendar.statusThrough(currentDate)) {
   try {
-    const days = await api(`/api/task-days?through=${shifted(currentDate, 14)}`);
+    const days = await api(`/api/task-days?through=${through}`);
     activeDays = new Set(days.map(day => day.task_date));
     completedDays = new Set(days.filter(day => Number(day.task_count) > 0 && Number(day.incomplete_count) === 0).map(day => day.task_date));
     renderCalendar();
@@ -553,8 +625,7 @@ async function loadOverdue() {
 async function selectDate(value) {
   currentDate = value;
   renderCalendar();
-  await loadTasks();
-  await loadOverdue();
+  await Promise.all([loadTasks(), loadOverdue(), loadActiveDays(TasklineCalendar.statusThrough(value))]);
 }
 
 async function toggleTask(task) {
@@ -564,7 +635,7 @@ async function toggleTask(task) {
   try {
     const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ completed: Boolean(task.completed) }) });
     task.completed = Boolean(updated.completed);
-    await loadTasks();
+    await Promise.all([loadTasks(), loadActiveDays()]);
     announcer.textContent = `${task.title} marked ${task.completed ? 'complete' : 'incomplete'}.`;
     loadOverdue();
   } catch (err) {
@@ -806,11 +877,18 @@ weekStrip.addEventListener('click', event => {
 document.querySelector('#previous-day').addEventListener('click', () => selectDate(shifted(currentDate, -1)));
 document.querySelector('#next-day').addEventListener('click', () => selectDate(shifted(currentDate, 1)));
 todayButton.addEventListener('click', () => selectDate(today));
-monthPicker.addEventListener('click', () => {
-  if (typeof datePicker.showPicker === 'function') datePicker.showPicker();
-  else datePicker.click();
+monthPicker.addEventListener('click', openMonthCalendar);
+document.querySelector('#month-dialog-previous').addEventListener('click', () => moveCalendarMonth(-1));
+document.querySelector('#month-dialog-next').addEventListener('click', () => moveCalendarMonth(1));
+document.querySelector('#month-dialog-close').addEventListener('click', () => monthDialog.close());
+document.querySelector('#month-dialog-today').addEventListener('click', () => { monthDialog.close(); selectDate(today); });
+monthGrid.addEventListener('click', event => {
+  const day = event.target.closest('[data-date]');
+  if (!day) return;
+  monthDialog.close();
+  selectDate(day.dataset.date);
 });
-datePicker.addEventListener('change', () => { if (datePicker.value) selectDate(datePicker.value); });
+monthDialog.addEventListener('close', () => monthPicker.setAttribute('aria-expanded', 'false'));
 
 let weekSwipeX = null;
 weekStrip.addEventListener('pointerdown', event => { weekSwipeX = event.clientX; });

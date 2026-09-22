@@ -14,8 +14,9 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=9">
-  <script src="/app.js?v=9" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=10">
+  <script src="/calendar-utils.js?v=1" defer></script>
+  <script src="/app.js?v=10" defer></script>
 </head>
 <body>
   <header class="app-header">
@@ -31,8 +32,7 @@
   <main class="shell">
     <header class="page-heading">
       <div class="heading-topline date-only">
-        <button id="month-picker" class="month-picker" type="button"><span id="month-label">July 2026</span> <span aria-hidden="true">⌄</span></button>
-        <input id="date-picker" class="date-picker" type="date" aria-label="Choose a date">
+        <button id="month-picker" class="month-picker" type="button" aria-haspopup="dialog" aria-expanded="false"><span id="month-label">July 2026</span> <span aria-hidden="true">⌄</span></button>
         <button id="today-button" class="today-button" type="button" hidden>Today</button>
       </div>
       <h1 id="day-title">Today</h1>
@@ -218,6 +218,25 @@
       <p id="install-dialog-message">Open your browser menu, then choose Add to Home Screen.</p>
       <div class="dialog-actions"><button id="install-dialog-close" class="save-label" type="submit">Got it</button></div>
     </form>
+  </dialog>
+  <dialog id="month-dialog" class="month-dialog" aria-labelledby="month-dialog-title">
+    <div class="month-dialog-content">
+      <header class="month-calendar-header">
+        <button id="month-dialog-previous" class="month-calendar-arrow" type="button" aria-label="Previous month">‹</button>
+        <div><small id="month-dialog-kicker">Full month</small><h2 id="month-dialog-title">July 2026</h2></div>
+        <button id="month-dialog-next" class="month-calendar-arrow" type="button" aria-label="Next month">›</button>
+      </header>
+      <div id="month-weekdays" class="month-weekdays" aria-hidden="true"></div>
+      <div id="month-grid" class="month-grid" role="grid" aria-label="Choose a day"></div>
+      <div class="month-legend" aria-label="Day status legend">
+        <span><i class="status-dot incomplete"></i><span id="month-legend-incomplete">Needs attention</span></span>
+        <span><i class="status-dot complete"></i><span id="month-legend-complete">All complete</span></span>
+      </div>
+      <footer class="month-dialog-actions">
+        <button id="month-dialog-close" type="button">Close</button>
+        <button id="month-dialog-today" type="button">Today</button>
+      </footer>
+    </div>
   </dialog>
   <div id="announcer" class="sr-only" aria-live="assertive"></div>
 </body>
