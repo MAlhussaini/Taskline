@@ -42,6 +42,7 @@ test("wires the full-month calendar and both completion states", async () => {
   assert.match(html, /id="month-dialog"/);
   assert.match(html, /id="month-grid"/);
   assert.match(app, /renderMonthCalendar/);
+  assert.match(app, /monthGrid\.addEventListener\('keydown'/);
   assert.match(app, /completedDays\.has\(iso\)/);
   assert.match(css, /\.month-day\.has-tasks/);
   assert.match(css, /\.month-day\.has-tasks\.all-complete/);

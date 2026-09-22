@@ -241,6 +241,7 @@ function applyLanguage() {
   navRoutines.lastChild.textContent = rt('routines');
   navLists.lastChild.textContent = lt('lists');
   document.querySelector('#nav-settings').lastChild.textContent = t('settings');
+  document.querySelector('#nav-settings').title = arabic ? 'ستتوفر الإعدادات لاحقًا' : 'Settings will be available later';
   document.querySelector('#tasks-heading').textContent = t('list');
   document.querySelector('#overdue-heading').textContent = t('overdue');
   todayButton.textContent = t('today');
@@ -362,7 +363,9 @@ function renderMonthCalendar() {
 
   monthGrid.innerHTML = '';
   const fragment = document.createDocumentFragment();
-  TasklineCalendar.monthGrid(calendarCursor).forEach(iso => {
+  const visibleDates = TasklineCalendar.monthGrid(calendarCursor);
+  const keyboardDate = visibleDates.includes(currentDate) ? currentDate : calendarCursor;
+  visibleDates.forEach(iso => {
     const value = fromISO(iso);
     const hasTasks = activeDays.has(iso);
     const allComplete = completedDays.has(iso);
@@ -373,6 +376,7 @@ function renderMonthCalendar() {
     button.dataset.date = iso;
     button.setAttribute('role', 'gridcell');
     button.setAttribute('aria-selected', String(iso === currentDate));
+    button.tabIndex = iso === keyboardDate ? 0 : -1;
     if (iso === today) button.setAttribute('aria-current', 'date');
     button.setAttribute('aria-label', `${new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(value)} — ${statusText}`);
     button.innerHTML = `<span>${new Intl.DateTimeFormat(locale, { day: 'numeric' }).format(value)}</span><i aria-hidden="true"></i>`;
@@ -381,12 +385,21 @@ function renderMonthCalendar() {
   monthGrid.appendChild(fragment);
 }
 
+function setCalendarBusy(busy) {
+  monthDialog.querySelector('.month-dialog-content').setAttribute('aria-busy', String(busy));
+  document.querySelector('#month-dialog-previous').disabled = busy;
+  document.querySelector('#month-dialog-next').disabled = busy;
+  monthGrid.classList.toggle('loading', busy);
+}
+
 async function openMonthCalendar() {
   calendarCursor = TasklineCalendar.monthStart(currentDate);
   renderMonthCalendar();
   monthPicker.setAttribute('aria-expanded', 'true');
   monthDialog.showModal();
+  setCalendarBusy(true);
   await loadActiveDays(TasklineCalendar.monthEnd(calendarCursor));
+  setCalendarBusy(false);
 }
 
 async function moveCalendarMonth(amount) {
@@ -394,7 +407,25 @@ async function moveCalendarMonth(amount) {
   cursor.setMonth(cursor.getMonth() + amount, 1);
   calendarCursor = TasklineCalendar.monthStart(toISO(cursor));
   renderMonthCalendar();
+  setCalendarBusy(true);
   await loadActiveDays(TasklineCalendar.monthEnd(calendarCursor));
+  setCalendarBusy(false);
+}
+
+async function focusMonthDate(iso) {
+  let target = monthGrid.querySelector(`[data-date="${iso}"]`);
+  if (!target) {
+    calendarCursor = TasklineCalendar.monthStart(iso);
+    renderMonthCalendar();
+    setCalendarBusy(true);
+    await loadActiveDays(TasklineCalendar.monthEnd(calendarCursor));
+    setCalendarBusy(false);
+    target = monthGrid.querySelector(`[data-date="${iso}"]`);
+  }
+  if (!target) return;
+  monthGrid.querySelectorAll('.month-day').forEach(day => { day.tabIndex = -1; });
+  target.tabIndex = 0;
+  target.focus();
 }
 
 function effectiveToday(now = new Date(), targetWorkspace = workspace) {
@@ -887,6 +918,23 @@ monthGrid.addEventListener('click', event => {
   if (!day) return;
   monthDialog.close();
   selectDate(day.dataset.date);
+});
+monthGrid.addEventListener('keydown', event => {
+  const day = event.target.closest('[data-date]');
+  if (!day) return;
+  const rtl = document.documentElement.dir === 'rtl';
+  const weekday = fromISO(day.dataset.date).getDay();
+  const offsets = {
+    ArrowLeft: rtl ? 1 : -1,
+    ArrowRight: rtl ? -1 : 1,
+    ArrowUp: -7,
+    ArrowDown: 7,
+    Home: -weekday,
+    End: 6 - weekday,
+  };
+  if (!(event.key in offsets)) return;
+  event.preventDefault();
+  focusMonthDate(shifted(day.dataset.date, offsets[event.key]));
 });
 monthDialog.addEventListener('close', () => monthPicker.setAttribute('aria-expanded', 'false'));
 

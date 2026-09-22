@@ -14,7 +14,7 @@ import websocket
 
 
 APP_URL = "http://100.109.102.8:8000/"
-VIEWPORTS = ((320, 568), (768, 1024), (1440, 900))
+VIEWPORTS = ((320, 568), (568, 320), (768, 1024), (1440, 900))
 
 
 class DevTools:
@@ -76,8 +76,13 @@ def main() -> None:
                     return next((item for item in json.load(response) if item["type"] == "page"), None)
 
             target = None
-            wait_for(lambda: bool((target_holder := page_target())))
-            target = page_target()
+
+            def browser_page_is_ready() -> bool:
+                nonlocal target
+                target = page_target()
+                return target is not None
+
+            wait_for(browser_page_is_ready)
             assert target is not None
             socket = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=10)
             devtools = DevTools(socket)
@@ -97,22 +102,37 @@ def main() -> None:
                       const dialog = document.querySelector('#month-dialog');
                       const grid = document.querySelector('#month-grid');
                       const rect = dialog.getBoundingClientRect();
+                      const dayRects = [...grid.querySelectorAll('.month-day')].map(day => day.getBoundingClientRect());
                       return {
                         open: dialog.open,
                         days: grid.querySelectorAll('.month-day').length,
                         insideViewport: rect.left >= -1 && rect.right <= innerWidth + 1 && rect.top >= -1 && rect.bottom <= innerHeight + 1,
                         pageFits: document.documentElement.scrollWidth <= innerWidth,
                         gridFits: grid.scrollWidth <= grid.clientWidth,
+                        minDayWidth: Math.min(...dayRects.map(day => day.width)),
+                        minDayHeight: Math.min(...dayRects.map(day => day.height)),
                       };
                     })()"""
                 )
-                assert metrics == {
-                    "open": True,
-                    "days": 42,
-                    "insideViewport": True,
-                    "pageFits": True,
-                    "gridFits": True,
-                }, (width, height, metrics)
+                assert metrics["open"] is True, (width, height, metrics)
+                assert metrics["days"] == 42, (width, height, metrics)
+                assert metrics["insideViewport"] is True, (width, height, metrics)
+                assert metrics["pageFits"] is True, (width, height, metrics)
+                assert metrics["gridFits"] is True, (width, height, metrics)
+                if width <= 360:
+                    assert metrics["minDayWidth"] >= 43, (width, height, metrics)
+                    assert metrics["minDayHeight"] >= 44, (width, height, metrics)
+
+            moved_with_keyboard = devtools.evaluate(
+                """(() => {
+                  const selected = document.querySelector('.month-day.selected');
+                  const expected = TasklineCalendar.addDays(selected.dataset.date, 1);
+                  selected.focus();
+                  selected.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+                  return document.activeElement.dataset.date === expected;
+                })()"""
+            )
+            assert moved_with_keyboard is True
 
             devtools.evaluate("document.querySelector('#language-toggle').click()")
             rtl = devtools.evaluate("document.documentElement.dir === 'rtl' && document.querySelector('#month-dialog').open")
