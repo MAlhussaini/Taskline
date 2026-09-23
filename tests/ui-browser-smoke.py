@@ -13,6 +13,7 @@ import runpy
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -95,7 +96,7 @@ def main():
                 assert not result.get("exceptionDetails"), result
                 return result.get("result", {}).get("value")
 
-            def click(selector):
+            def click(selector, hold=False, touch=False, cancel=False, move=False):
                 point = evaluate_async(f"""(async () => {{
                   const el = document.querySelector({json.dumps(selector)});
                   el.scrollIntoView({{block: 'center'}});
@@ -104,8 +105,18 @@ def main():
                   return {{x: r.x + r.width / 2 - visualViewport.offsetLeft,
                     y: r.y + r.height / 2 - visualViewport.offsetTop}};
                 }})()""")
-                for kind in ("mousePressed", "mouseReleased"):
-                    dev.call("Input.dispatchMouseEvent", {"type": kind, **point, "button": "left", "clickCount": 1})
+                if touch:
+                    dev.call("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{**point, "id": 1}]})
+                    if hold:
+                        time.sleep(.65)
+                    if move:
+                        dev.call("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{**point, "x": point["x"] + 25, "id": 1}]})
+                    dev.call("Input.dispatchTouchEvent", {"type": "touchCancel" if cancel else "touchEnd", "touchPoints": []})
+                else:
+                    dev.call("Input.dispatchMouseEvent", {"type": "mousePressed", **point, "button": "left", "clickCount": 1})
+                    if hold:
+                        time.sleep(.65)
+                    dev.call("Input.dispatchMouseEvent", {"type": "mouseReleased", **point, "button": "left", "clickCount": 1})
 
             def fits(context):
                 result = dev.evaluate("""(() => ({
@@ -118,10 +129,11 @@ def main():
                 }))()""")
                 assert result["fits"] and not result["overflow"], (context, result)
 
-            def screenshot(name):
+            def screenshot(name, scroll_top=True):
                 if args.screenshots:
                     args.screenshots.mkdir(parents=True, exist_ok=True)
-                    dev.evaluate("window.scrollTo(0, 0)")
+                    if scroll_top:
+                        dev.evaluate("window.scrollTo(0, 0)")
                     result = dev.call("Page.captureScreenshot", {"format": "png"})
                     (args.screenshots / f"{name}.png").write_bytes(base64.b64decode(result["data"]))
 
@@ -130,34 +142,56 @@ def main():
             original = dev.evaluate("tasks.map(task => task.id)")
             evaluate_async("toggleStar(tasks[1])")
             assert dev.evaluate("Number(list.firstElementChild.dataset.id)") == original[1]
-            evaluate_async("toggleStar(tasks.find(task => task.id === " + str(original[1]) + "), 2)")
+            evaluate_async("toggleStar(tasks.find(task => task.id === " + str(original[1]) + "))")
             assert dev.evaluate("[...list.children].map(row => Number(row.dataset.id))") == original
             evaluate_async("toggleTask(tasks[0])")
             assert dev.evaluate("Number(list.lastElementChild.dataset.id)") == original[0]
             evaluate_async("toggleTask(tasks.find(task => task.id === " + str(original[0]) + "))")
             assert dev.evaluate("[...list.children].map(row => Number(row.dataset.id))") == original
 
-            # Two quick real clicks must persist red, not get lost during re-render.
+            # A hold creates red; yellow and red each clear with one ordinary click.
             first_star = f'[data-id="{original[0]}"] [data-star]'
-            click(first_star)
-            click(first_star)
+            click(first_star, hold=True)
             wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 2"))
             assert dev.evaluate("document.querySelector('.day-star-badge') !== null")
             assert dev.evaluate(f"getComputedStyle(document.querySelector({json.dumps(first_star)})).color === 'rgb(199, 53, 53)'")
+            second_star = f'[data-id="{original[1]}"] [data-star]'
+            click(second_star)
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[1]}).starred === 1"))
+            click(second_star, hold=True)
+            wait_for(lambda: dev.evaluate("error.textContent.includes('one task of the day')"))
+            assert dev.evaluate(f"tasks.find(task => task.id === {original[1]}).starred === 1")
+            click(second_star)
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[1]}).starred === 0"))
+            assert dev.evaluate("error.textContent === ''")
             click(first_star)
             wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 0"))
             click(first_star)
-            # Completing while the star click is still pending must flush it first.
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 1"))
+            # Completing still releases the star and restores yellow on reopening.
             click(f'[data-id="{original[0]}"] [data-check]')
             wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).completed === 1"))
             assert dev.evaluate(f"document.querySelector({json.dumps(first_star)}).disabled && !document.querySelector({json.dumps(first_star)}).classList.contains('starred')")
             click(f'[data-id="{original[0]}"] [data-check]')
             wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).completed === 0"))
             assert dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 1")
-            evaluate_async(f"toggleStar(tasks.find(task => task.id === {original[0]}), 2)")
+            evaluate_async(f"toggleStar(tasks.find(task => task.id === {original[0]}))")
+
+            dev.call("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": True})
+            dev.call("Emulation.setTouchEmulationEnabled", {"enabled": True})
+            click(first_star, hold=True, touch=True, cancel=True)
+            assert dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 0")
+            click(first_star, hold=True, touch=True, move=True)
+            assert dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 0")
+            click(first_star, hold=True, touch=True)
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 2"))
+            click(first_star, touch=True)
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 0"))
 
             # Add consecutive subtasks without native prompts or losing input focus.
-            click(".subtask-shortcut")
+            assert dev.evaluate("document.querySelectorAll('.subtask-shortcut').length === 0")
+            click("[data-task-more]")
+            click(".task-tools:not([hidden]) [data-add-subtask]")
             wait_for(lambda: dev.evaluate("subtaskDialog.open"))
             for title in ("First small step", "خطوة فرعية ثانية واضحة"):
                 dev.evaluate(f"subtaskInput.value = {json.dumps(title)}")
@@ -176,7 +210,51 @@ def main():
             dev.evaluate("window.fetch = window.savedFetch")
             click("#subtask-done")
             wait_for(lambda: dev.evaluate("document.activeElement.classList.contains('subtask-shortcut')"))
-            assert dev.evaluate("document.querySelectorAll('.subtask-context').length === 2")
+            assert dev.evaluate("document.querySelectorAll('.subtask-shortcut').length === 1")
+            children = dev.evaluate(f"tasks.filter(task => task.parent_id === {original[0]}).map(task => task.id)")
+
+            def family_is_together():
+                return dev.evaluate(f"""(() => {{
+                  const ids = [...list.children].map(row => Number(row.dataset.id));
+                  const parentIndex = ids.indexOf({original[0]});
+                  return JSON.stringify(ids.slice(parentIndex + 1, parentIndex + 3)) === JSON.stringify({json.dumps(children)});
+                }})()""")
+
+            # Complete/uncomplete parent and child; unrelated completed tasks cannot split them.
+            evaluate_async(f"toggleTask(tasks.find(task => task.id === {original[1]}))")
+            evaluate_async(f"toggleTask(tasks.find(task => task.id === {original[0]}))")
+            assert family_is_together()
+            evaluate_async("loadTasks()")
+            assert family_is_together()
+            evaluate_async(f"toggleTask(tasks.find(task => task.id === {children[0]}))")
+            assert family_is_together()
+            evaluate_async(f"toggleStar(tasks.find(task => task.id === {children[0]}))")
+            assert family_is_together()
+            evaluate_async(f"toggleStar(tasks.find(task => task.id === {children[0]}))")
+            evaluate_async(f"toggleTask(tasks.find(task => task.id === {original[1]}))")
+            evaluate_async(f"toggleTask(tasks.find(task => task.id === {original[0]}))")
+            evaluate_async(f"toggleTask(tasks.find(task => task.id === {original[0]}))")
+            assert family_is_together()
+            # Reorder the parent as a block, persist it, then restore its saved position.
+            for direction in ('down', 'up'):
+                click(f'[data-id="{original[0]}"] [data-task-more]')
+                click(f'[data-id="{original[0]}"] [data-move="{direction}"]')
+                assert family_is_together()
+                evaluate_async("saveOrder('Browser family test')")
+                evaluate_async("loadTasks()")
+                assert family_is_together()
+            # The same drag path moves whole families and keeps child moves local.
+            dev.evaluate(f"""draggedId = {original[0]};
+              placeDraggedItem(list.querySelector('[data-id="{original[1]}"]'), Infinity);
+              syncTasksFromDom(); draggedId = null; render();""")
+            assert family_is_together()
+            evaluate_async("saveOrder('Browser family drag test')")
+            evaluate_async("loadTasks()")
+            assert family_is_together()
+            dev.evaluate(f"""draggedId = {original[0]};
+              placeDraggedItem(list.querySelector('[data-id="{original[1]}"]'), -Infinity);
+              syncTasksFromDom(); draggedId = null; render();""")
+            evaluate_async("saveOrder('Restore browser family order')")
 
             for lang in ("en", "ar"):
                 dev.evaluate(f"language = '{lang}'; applyLanguage()")
@@ -238,6 +316,13 @@ def main():
                     fits((lang, width, "month"))
                     dev.evaluate("monthDialog.close()")
                     print(f"PASS {lang} {width}x{height}: all pages, task tools, routine fields, calendar")
+
+            dev.call("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": True})
+            evaluate_async("setView('day')")
+            evaluate_async(f"toggleTask(tasks.find(task => task.id === {original[0]}))")
+            assert family_is_together()
+            dev.evaluate(f"window.scrollTo(0, list.querySelector('[data-id=\"{original[0]}\"]').getBoundingClientRect().top + scrollY - 70)")
+            screenshot("ar-completed-family", scroll_top=False)
 
             # An API failure must be visible even when the task composer is hidden.
             evaluate_async("setView('lists')")

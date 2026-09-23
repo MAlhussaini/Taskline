@@ -10,7 +10,8 @@ const subtaskInput = document.querySelector('#subtask-input');
 const subtaskError = document.querySelector('#subtask-error');
 let subtaskParent = null;
 let subtaskSaving = false;
-const pendingStarClicks = new Map();
+let starPress = null;
+let suppressStarClickUntil = 0;
 let starWrites = Promise.resolve();
 const announcer = document.querySelector('#announcer');
 const dayTitle = document.querySelector('#day-title');
@@ -532,18 +533,21 @@ const escapeHtml = value => value.replace(/[&<>'"]/g, char => ({'&':'&amp;','<':
 const grip = () => `<span class="grip" aria-label="${language === 'ar' ? 'اسحب لإعادة الترتيب' : 'Drag to reorder'}">${'<i></i>'.repeat(6)}</span>`;
 
 function taskDisplayGroup(task) {
-  if (task.completed) return 2;
-  return task.starred ? 0 : 1;
+  const root = tasks.find(entry => entry.id === task.parent_id) || task;
+  return TasklineOrder.group({ parent: root, children: tasks.filter(entry => entry.parent_id === root.id) });
 }
 
 function orderTasksForDisplay(source) {
-  return source
-    .map((task, savedIndex) => ({ task, savedIndex }))
-    .sort((left, right) => taskDisplayGroup(left.task) - taskDisplayGroup(right.task) || left.savedIndex - right.savedIndex)
-    .map(entry => entry.task);
+  return TasklineOrder.order(source);
+}
+
+function movePeers(task, source) {
+  return source.filter(entry => task.parent_id ? entry.parent_id === task.parent_id
+    : !entry.parent_id && taskDisplayGroup(entry) === taskDisplayGroup(task));
 }
 
 function render() {
+  cancelStarPress();
   syncLocalToday();
   list.innerHTML = '';
   const labels = [...new Set(tasks.map(task => task.label).filter(Boolean))].sort();
@@ -554,13 +558,15 @@ function render() {
     labelFilter.value = labels.includes(selected) ? selected : '';
     activeLabel = labelFilter.value;
   }
-  const filteredTasks = activeLabel && currentView === 'inbox' ? tasks.filter(task => task.label === activeLabel) : tasks;
+  const filteredTasks = activeLabel && currentView === 'inbox' ? TasklineOrder.filtered(tasks, activeLabel) : tasks;
   const visibleTasks = orderTasksForDisplay(filteredTasks);
   visibleTasks.forEach((task, index) => {
     const item = document.createElement('li');
     item.className = `task${task.completed ? ' completed' : ''}${task.parent_id ? ' child-task' : ''}${task.routine_occurrence_id ? ' routine-task' : ''}`;
     item.dataset.id = task.id;
-    item.draggable = true;
+    item.draggable = !activeLabel;
+    const peers = movePeers(task, visibleTasks);
+    const peerIndex = peers.findIndex(entry => entry.id === task.id);
     const label = task.label ? `<span class="task-label ${task.label_color || 'gray'}"><i></i>${escapeHtml(task.label)}</span>` : '';
     const plan = task.location === 'inbox' && task.planning_kind !== 'none' ? `<span class="planning-badge">${escapeHtml(task.planning_value || task.planning_kind)}</span>` : '';
     const routineBadge = task.routine_occurrence_id ? `<span class="routine-badge">🔁 ${rt('routineBadge')}</span>` : '';
@@ -571,8 +577,8 @@ function render() {
     const transferText = currentView === 'inbox' ? (language === 'ar' ? 'نقل إلى اليوم' : 'Move to today') : (language === 'ar' ? 'نقل إلى الحافظة' : 'Move to inbox');
     const parent = tasks.find(entry => entry.id === task.parent_id);
     const children = tasks.filter(entry => entry.parent_id === task.id);
-    const childContext = parent ? `<span class="subtask-context">↳ ${escapeHtml(parent.title)}</span>` : '';
-    const subtaskShortcut = !task.parent_id ? `<button type="button" class="subtask-shortcut" data-add-subtask>＋ ${language === 'ar' ? 'مهمة فرعية' : 'Subtask'}${children.length ? ` · ${children.filter(child => child.completed).length}/${children.length}` : ''}</button>` : '';
+    const childContext = parent ? `<span class="sr-only">${escapeHtml(parent.title)}: </span>` : '';
+    const subtaskShortcut = !task.parent_id && children.length ? `<button type="button" class="subtask-shortcut" data-add-subtask>＋ ${language === 'ar' ? 'مهام فرعية' : 'Subtasks'} · ${children.filter(child => child.completed).length}/${children.length}</button>` : '';
     const dayStarBadge = !task.completed && Number(task.starred) === 2 ? `<span class="day-star-badge">★ ${language === 'ar' ? 'مهمة اليوم' : 'Task of the day'}</span>` : '';
     item.innerHTML = `<button type="button" class="check-button" data-check aria-label="${language === 'ar' ? (task.completed ? 'جعل المهمة غير مكتملة' : 'إكمال المهمة') : `Mark ${escapeHtml(task.title)} ${task.completed ? 'incomplete' : 'complete'}`}" aria-pressed="${Boolean(task.completed)}"><span aria-hidden="true">✓</span></button>
       <span class="task-copy">${childContext}<span class="task-title"></span><span class="task-meta">${dayStarBadge}${label}${plan}${routineBadge}${carriedBadge}${followBadge}${missedBadge}</span>${subtaskShortcut}</span>
@@ -585,6 +591,7 @@ function render() {
         <button type="button" class="subtask-button" data-add-subtask aria-label="${task.parent_id ? (language === 'ar' ? 'المهام الفرعية بمستوى واحد فقط' : 'Subtasks are limited to one level') : (language === 'ar' ? 'إضافة مهمة فرعية' : 'Add subtask')}" ${task.parent_id ? 'disabled' : ''}><span aria-hidden="true">➕</span></button>
         ${!task.parent_id && !task.routine_occurrence_id ? `<button type="button" class="routine-button" data-make-routine aria-label="${language === 'ar' ? 'تحويل إلى روتين' : 'Make recurring'}"><span aria-hidden="true">🔁</span></button>` : ''}
         <button type="button" class="label-button" data-label aria-label="${language === 'ar' ? 'وسم المهمة' : `Label ${escapeHtml(task.title)}`} "><span aria-hidden="true">🏷️</span></button>
+        <button type="button" data-day-star ${task.completed || Number(task.starred) === 2 ? 'disabled' : ''}><span aria-hidden="true">★</span></button>
         ${task.routine_occurrence_id ? '' : `<button type="button" class="transfer-button" data-transfer aria-label="${transferText}: ${escapeHtml(task.title)}"><span aria-hidden="true">${transferIcon}</span></button>`}
         <button type="button" class="delete-button" data-delete aria-label="${language === 'ar' ? 'حذف المهمة' : `Delete ${escapeHtml(task.title)}`} "><span aria-hidden="true">🗑️</span></button>
       </span>
@@ -593,8 +600,8 @@ function render() {
         <button type="button" data-outlist aria-label="${language === 'ar' ? 'جعل المهمة مستقلة' : 'Make task independent'}" ${task.parent_id ? '' : 'disabled'}>✉️</button>
       </span>
       <span class="order-controls">
-        <button type="button" data-move="up" aria-label="${language === 'ar' ? 'نقل لأعلى' : 'Move up'}" ${index === 0 || taskDisplayGroup(visibleTasks[index - 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↑</button>
-        <button type="button" data-move="down" aria-label="${language === 'ar' ? 'نقل لأسفل' : 'Move down'}" ${index === visibleTasks.length - 1 || taskDisplayGroup(visibleTasks[index + 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↓</button>
+        <button type="button" data-move="up" aria-label="${language === 'ar' ? 'نقل لأعلى' : 'Move up'}" ${activeLabel || peerIndex <= 0 ? 'disabled' : ''}>↑</button>
+        <button type="button" data-move="down" aria-label="${language === 'ar' ? 'نقل لأسفل' : 'Move down'}" ${activeLabel || peerIndex === peers.length - 1 ? 'disabled' : ''}>↓</button>
       </span></span>`;
     item.querySelector('.task-title').textContent = task.title;
     updateStarButton(item.querySelector('[data-star]'), task, Number(task.starred));
@@ -603,6 +610,7 @@ function render() {
       ['[data-make-routine]', 'Repeat', 'تكرار'], ['[data-label]', 'Label', 'وسم'],
       ['[data-transfer]', currentView === 'inbox' ? 'To today' : 'To inbox', currentView === 'inbox' ? 'إلى اليوم' : 'إلى الحافظة'],
       ['[data-delete]', 'Delete', 'حذف'], ['[data-enlist]', 'Nest task', 'جعلها فرعية'],
+      ['[data-day-star]', 'Task of the day', 'مهمة اليوم'],
       ['[data-outlist]', 'Unnest task', 'جعلها مستقلة'], ['[data-move="up"]', 'Move up', 'نقل لأعلى'],
       ['[data-move="down"]', 'Move down', 'نقل لأسفل'],
     ];
@@ -624,24 +632,33 @@ function render() {
 
 function syncTasksFromDom() {
   const order = [...list.querySelectorAll('.task')].map(item => Number(item.dataset.id));
-  const visibleIds = new Set(order);
-  const byId = new Map(tasks.map(task => [task.id, task]));
-  const reordered = [...tasks];
-  for (let group = 0; group <= 2; group += 1) {
-    const slots = tasks.map((task, index) => ({ task, index }))
-      .filter(entry => visibleIds.has(entry.task.id) && taskDisplayGroup(entry.task) === group)
-      .map(entry => entry.index);
-    const groupTasks = order.map(id => byId.get(id)).filter(task => task && taskDisplayGroup(task) === group);
-    slots.forEach((slot, index) => { reordered[slot] = groupTasks[index]; });
+  tasks = TasklineOrder.reorder(tasks, order);
+}
+
+function moveTaskRows(active, target, below) {
+  if (activeLabel || !active || !target || active === target) return;
+  const task = tasks.find(entry => entry.id === Number(active.dataset.id));
+  let destination = tasks.find(entry => entry.id === Number(target.dataset.id));
+  if (task.parent_id) {
+    if (destination.parent_id !== task.parent_id) return;
+    list.insertBefore(active, below ? target.nextSibling : target);
+    return;
   }
-  tasks = reordered;
+  destination = tasks.find(entry => entry.id === destination.parent_id) || destination;
+  if (destination.id === task.id || taskDisplayGroup(task) !== taskDisplayGroup(destination)) return;
+  const nodes = root => [...list.children].filter(row => {
+    const entry = tasks.find(value => value.id === Number(row.dataset.id));
+    return entry.id === root.id || entry.parent_id === root.id;
+  });
+  const destinationRows = nodes(destination);
+  const anchor = below ? destinationRows.at(-1).nextSibling : destinationRows[0];
+  nodes(task).forEach(row => list.insertBefore(row, anchor));
 }
 
 function placeDraggedItem(target, clientY) {
   const active = list.querySelector(`[data-id="${draggedId}"]`);
-  if (!active || !target || active === target) return;
-  const below = clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
-  list.insertBefore(active, below ? target.nextSibling : target);
+  if (!target) return;
+  moveTaskRows(active, target, clientY > target.getBoundingClientRect().top + target.offsetHeight / 2);
 }
 
 async function saveOrder(message) {
@@ -809,7 +826,8 @@ document.querySelector('#subtask-close').addEventListener('click', closeSubtaskD
 document.querySelector('#subtask-done').addEventListener('click', closeSubtaskDialog);
 subtaskDialog.addEventListener('cancel', event => { if (subtaskSaving) event.preventDefault(); });
 subtaskDialog.addEventListener('close', () => {
-  list.querySelector(`[data-id="${subtaskParent?.id}"] .subtask-shortcut`)?.focus();
+  const row = list.querySelector(`[data-id="${subtaskParent?.id}"]`);
+  (row?.querySelector('.subtask-shortcut') || row?.querySelector('[data-task-more]'))?.focus();
 });
 
 async function transferTask(task) {
@@ -834,46 +852,84 @@ function updateStarButton(button, task, level) {
   button.setAttribute('aria-pressed', String(active));
   const description = task.completed
     ? (language === 'ar' ? 'المهمة مكتملة؛ النجمة غير محسوبة' : 'Completed; star does not count')
-    : (language === 'ar' ? ['تمييز بنجمة', 'اجعلها مهمة اليوم', 'إزالة النجمة'] : ['Star task', 'Make task of the day', 'Remove star'])[level];
+    : (level ? (language === 'ar' ? 'إزالة النجمة' : 'Remove star') : (language === 'ar' ? 'تمييز بنجمة' : 'Star task'));
   button.setAttribute('aria-label', `${description}: ${task.title}`);
-  button.title = description;
+  button.title = `${description}. ${language === 'ar' ? 'اضغط مطولًا لاختيار مهمة اليوم، أو اخترها من أدوات المهمة.' : 'Hold for task of the day, or choose it in task actions.'}`;
 }
 
-function toggleStar(task, steps = 1) {
+function toggleStar(task, level = null) {
+  if (!task) return starWrites;
   starWrites = starWrites.then(async () => {
     task = tasks.find(entry => entry.id === task.id) || task;
     if (task.completed) return;
+    const button = list.querySelector(`[data-id="${task.id}"] [data-star]`);
+    const restoreFocus = document.activeElement === button ||
+      document.activeElement === list.querySelector(`[data-id="${task.id}"] [data-day-star]`);
+    if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
     error.textContent = '';
     try {
-      const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ starred: (Number(task.starred) + steps) % 3 }) });
+      const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ starred: level ?? (task.starred ? 0 : 1) }) });
       task.starred = Number(updated.starred);
     } catch (err) {
       error.textContent = language === 'ar' && err.message.includes('three') ? 'يمكن تمييز ثلاث مهام غير مكتملة فقط في هذه القائمة.'
         : language === 'ar' && err.message.includes('one task of the day') ? 'توجد مهمة اليوم بالفعل. أزل نجمتها الحمراء أولًا.' : err.message;
     }
     render();
+    if (restoreFocus) list.querySelector(`[data-id="${task.id}"] [data-star]`)?.focus({ preventScroll: true });
   });
   return starWrites;
 }
 
-function queueStarClick(task) {
-  const pending = pendingStarClicks.get(task.id) || { task, steps: 0 };
-  clearTimeout(pending.timer);
-  pending.steps += 1;
-  pending.timer = setTimeout(() => flushStarClicks(), 350);
-  pendingStarClicks.set(task.id, pending);
-  const button = list.querySelector(`[data-id="${task.id}"] [data-star]`);
-  updateStarButton(button, task, (Number(task.starred) + pending.steps) % 3);
+function cancelStarPress() {
+  if (!starPress) return;
+  clearTimeout(starPress.timer);
+  starPress.button.classList.remove('long-press-ready');
+  starPress = null;
 }
 
 async function flushStarClicks() {
-  for (const [id, pending] of pendingStarClicks) {
-    clearTimeout(pending.timer);
-    pendingStarClicks.delete(id);
-    toggleStar(pending.task, pending.steps);
-  }
+  cancelStarPress();
   await starWrites;
 }
+
+list.addEventListener('pointerdown', event => {
+  const button = event.target.closest('[data-star]');
+  if (!button || button.disabled || event.button !== 0) return;
+  cancelStarPress();
+  suppressStarClickUntil = 0;
+  const press = { button, id: Number(button.closest('.task').dataset.id), pointerId: event.pointerId,
+    x: event.clientX, y: event.clientY, ready: false, moved: false };
+  press.timer = setTimeout(() => {
+    press.ready = true;
+    button.classList.add('long-press-ready');
+  }, 550);
+  starPress = press;
+  button.setPointerCapture(event.pointerId);
+});
+list.addEventListener('pointermove', event => {
+  if (!starPress || starPress.pointerId !== event.pointerId) return;
+  if (Math.hypot(event.clientX - starPress.x, event.clientY - starPress.y) > 10) {
+    clearTimeout(starPress.timer);
+    starPress.moved = true;
+    starPress.ready = false;
+    starPress.button.classList.remove('long-press-ready');
+  }
+});
+list.addEventListener('pointerup', event => {
+  if (!starPress || starPress.pointerId !== event.pointerId) return;
+  const press = starPress;
+  cancelStarPress();
+  if (press.ready || press.moved) suppressStarClickUntil = performance.now() + 700;
+  if (press.ready && !press.moved) {
+    event.preventDefault();
+    toggleStar(tasks.find(task => task.id === press.id), 2);
+  }
+});
+list.addEventListener('pointercancel', cancelStarPress);
+list.addEventListener('lostpointercapture', cancelStarPress);
+list.addEventListener('contextmenu', event => {
+  if (event.target.closest('[data-star]')) event.preventDefault();
+});
 
 async function changeHierarchy(task, parentId) {
   try {
@@ -969,7 +1025,14 @@ list.addEventListener('click', event => {
   const transfer = event.target.closest('[data-transfer]');
   if (transfer) { transferTask(tasks.find(task => task.id === Number(transfer.closest('.task').dataset.id))); return; }
   const star = event.target.closest('[data-star]');
-  if (star && !star.disabled) { queueStarClick(tasks.find(task => task.id === Number(star.closest('.task').dataset.id))); return; }
+  if (star) {
+    if (!star.disabled && (event.detail === 0 || performance.now() >= suppressStarClickUntil)) {
+      toggleStar(tasks.find(task => task.id === Number(star.closest('.task').dataset.id)));
+    }
+    return;
+  }
+  const dayStar = event.target.closest('[data-day-star]');
+  if (dayStar && !dayStar.disabled) { toggleStar(tasks.find(task => task.id === Number(dayStar.closest('.task').dataset.id)), 2); return; }
   const enlist = event.target.closest('[data-enlist]');
   if (enlist && !enlist.disabled) {
     const task = tasks.find(entry => entry.id === Number(enlist.closest('.task').dataset.id));
@@ -985,22 +1048,22 @@ list.addEventListener('click', event => {
   const remove = event.target.closest('[data-delete]');
   if (remove) { deleteTask(tasks.find(task => task.id === Number(remove.closest('.task').dataset.id))); return; }
   const button = event.target.closest('[data-move]');
-  if (!button) return;
+  if (!button || button.disabled) return;
   const item = button.closest('.task');
-  const sibling = button.dataset.move === 'up' ? item.previousElementSibling : item.nextElementSibling;
-  if (!sibling) return;
   const task = tasks.find(entry => entry.id === Number(item.dataset.id));
-  const siblingTask = tasks.find(entry => entry.id === Number(sibling.dataset.id));
-  if (taskDisplayGroup(task) !== taskDisplayGroup(siblingTask)) return;
-  if (button.dataset.move === 'up') list.insertBefore(item, sibling);
-  else list.insertBefore(sibling, item);
+  const peers = movePeers(task, orderTasksForDisplay(tasks));
+  const index = peers.findIndex(entry => entry.id === task.id);
+  const siblingTask = peers[index + (button.dataset.move === 'up' ? -1 : 1)];
+  if (!siblingTask) return;
+  const sibling = list.querySelector(`[data-id="${siblingTask.id}"]`);
+  moveTaskRows(item, sibling, button.dataset.move === 'down');
   syncTasksFromDom();
   render();
   saveOrder(`${task.title} moved.`);
 });
 
 list.addEventListener('dragstart', event => {
-  if (event.target.closest('button')) { event.preventDefault(); return; }
+  if (activeLabel || event.target.closest('button')) { event.preventDefault(); return; }
   const item = event.target.closest('.task'); if (!item) return;
   draggedId = Number(item.dataset.id); event.dataTransfer.effectAllowed = 'move'; requestAnimationFrame(() => item.classList.add('dragging'));
 });
@@ -1011,7 +1074,7 @@ list.addEventListener('dragend', () => {
 });
 
 list.addEventListener('pointerdown', event => {
-  if (event.pointerType === 'mouse' || !event.target.closest('.grip')) return;
+  if (activeLabel || event.pointerType === 'mouse' || !event.target.closest('.grip')) return;
   const item = event.target.closest('.task'); draggedId = Number(item.dataset.id); item.setPointerCapture(event.pointerId); item.classList.add('dragging');
 });
 list.addEventListener('pointermove', event => {

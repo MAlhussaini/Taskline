@@ -50,7 +50,7 @@ test("connects the page, install experience, and offline shell", async () => {
   assert.match(app, /beforeinstallprompt/);
   assert.match(app, /appinstalled/);
 
-  for (const asset of ["/", "/styles.css?v=13", "/calendar-utils.js?v=1", "/app.js?v=13", "/manifest.webmanifest", "/icon-maskable-512.png"]) {
+  for (const asset of ["/", "/styles.css?v=14", "/task-order.js?v=1", "/calendar-utils.js?v=1", "/app.js?v=14", "/manifest.webmanifest", "/icon-maskable-512.png"]) {
     assert.ok(worker.includes(`'${asset}'`), `${asset} is missing from the offline shell`);
   }
   assert.match(worker, /url\.pathname\.startsWith\('\/api\/'\)/);
