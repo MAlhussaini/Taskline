@@ -5,6 +5,13 @@ const count = document.querySelector('#task-count');
 const empty = document.querySelector('#empty-state');
 const hint = document.querySelector('#drag-hint');
 const error = document.querySelector('#form-error');
+const subtaskDialog = document.querySelector('#subtask-dialog');
+const subtaskInput = document.querySelector('#subtask-input');
+const subtaskError = document.querySelector('#subtask-error');
+let subtaskParent = null;
+let subtaskSaving = false;
+const pendingStarClicks = new Map();
+let starWrites = Promise.resolve();
 const announcer = document.querySelector('#announcer');
 const dayTitle = document.querySelector('#day-title');
 const monthLabel = document.querySelector('#month-label');
@@ -562,9 +569,14 @@ function render() {
     const missedBadge = task.routine_occurrence_id && !task.completed && !task.parent_id && task.task_date < today ? `<span class="missed-badge">○ ${rt('missed')}</span>` : '';
     const transferIcon = currentView === 'inbox' ? '📤' : '📥';
     const transferText = currentView === 'inbox' ? (language === 'ar' ? 'نقل إلى اليوم' : 'Move to today') : (language === 'ar' ? 'نقل إلى الحافظة' : 'Move to inbox');
+    const parent = tasks.find(entry => entry.id === task.parent_id);
+    const children = tasks.filter(entry => entry.parent_id === task.id);
+    const childContext = parent ? `<span class="subtask-context">↳ ${escapeHtml(parent.title)}</span>` : '';
+    const subtaskShortcut = !task.parent_id ? `<button type="button" class="subtask-shortcut" data-add-subtask>＋ ${language === 'ar' ? 'مهمة فرعية' : 'Subtask'}${children.length ? ` · ${children.filter(child => child.completed).length}/${children.length}` : ''}</button>` : '';
+    const dayStarBadge = !task.completed && Number(task.starred) === 2 ? `<span class="day-star-badge">★ ${language === 'ar' ? 'مهمة اليوم' : 'Task of the day'}</span>` : '';
     item.innerHTML = `<button type="button" class="check-button" data-check aria-label="${language === 'ar' ? (task.completed ? 'جعل المهمة غير مكتملة' : 'إكمال المهمة') : `Mark ${escapeHtml(task.title)} ${task.completed ? 'incomplete' : 'complete'}`}" aria-pressed="${Boolean(task.completed)}"><span aria-hidden="true">✓</span></button>
-      <span class="task-copy"><span class="task-title"></span><span class="task-meta">${label}${plan}${routineBadge}${carriedBadge}${followBadge}${missedBadge}</span></span>
-      <button type="button" class="star-button${task.starred ? ' starred' : ''}" data-star aria-label="${language === 'ar' ? (task.starred ? 'إزالة النجمة' : 'تمييز بنجمة') : `${task.starred ? 'Remove star from' : 'Star'} ${escapeHtml(task.title)}`}" aria-pressed="${Boolean(task.starred)}"><span aria-hidden="true">★</span></button>
+      <span class="task-copy">${childContext}<span class="task-title"></span><span class="task-meta">${dayStarBadge}${label}${plan}${routineBadge}${carriedBadge}${followBadge}${missedBadge}</span>${subtaskShortcut}</span>
+      <button type="button" class="star-button" data-star><span aria-hidden="true">★</span></button>
       <button type="button" class="task-more" data-task-more aria-label="${language === 'ar' ? 'أدوات المهمة' : 'Task actions'}" aria-expanded="false" aria-controls="task-tools-${task.id}"><span aria-hidden="true">•••</span></button>
       ${grip()}
       <span class="task-tools" id="task-tools-${task.id}" hidden>
@@ -585,6 +597,7 @@ function render() {
         <button type="button" data-move="down" aria-label="${language === 'ar' ? 'نقل لأسفل' : 'Move down'}" ${index === visibleTasks.length - 1 || taskDisplayGroup(visibleTasks[index + 1]) !== taskDisplayGroup(task) ? 'disabled' : ''}>↓</button>
       </span></span>`;
     item.querySelector('.task-title').textContent = task.title;
+    updateStarButton(item.querySelector('[data-star]'), task, Number(task.starred));
     const actionLabels = [
       ['[data-edit]', 'Edit', 'تعديل'], ['[data-add-subtask]', 'Subtask', 'مهمة فرعية'],
       ['[data-make-routine]', 'Repeat', 'تكرار'], ['[data-label]', 'Label', 'وسم'],
@@ -594,7 +607,7 @@ function render() {
       ['[data-move="down"]', 'Move down', 'نقل لأسفل'],
     ];
     actionLabels.forEach(([selector, en, ar]) => {
-      const button = item.querySelector(selector);
+      const button = item.querySelector(`.task-tools ${selector}`);
       if (!button) return;
       const caption = document.createElement('span');
       caption.className = 'action-caption';
@@ -678,12 +691,15 @@ async function loadOverdue() {
 }
 
 async function selectDate(value) {
+  await flushStarClicks();
   currentDate = value;
   renderCalendar();
   await Promise.all([loadTasks(), loadOverdue(), loadActiveDays(TasklineCalendar.statusThrough(value))]);
 }
 
 async function toggleTask(task) {
+  await flushStarClicks();
+  task = tasks.find(entry => entry.id === task.id) || task;
   const previous = Boolean(task.completed);
   task.completed = !previous;
   render();
@@ -704,8 +720,7 @@ async function deleteTask(task) {
   if (!window.confirm(`Delete “${task.title}”?`)) return;
   try {
     await api(`/api/tasks/${task.id}`, { method: 'DELETE' });
-    tasks = tasks.filter(entry => entry.id !== task.id);
-    render();
+    await loadTasks();
     announcer.textContent = `${task.title} deleted.`;
     loadActiveDays(); loadOverdue();
   } catch (err) {
@@ -728,19 +743,74 @@ async function editTask(task) {
   editTitle.focus();
 }
 
-async function addSubtask(task) {
-  const promptText = language === 'ar' ? `أضف مهمة فرعية إلى «${task.title}»` : `Add a subtask to “${task.title}”`;
-  const title = window.prompt(promptText);
-  if (title === null || !title.trim()) return;
+function renderSubtaskDialog() {
+  const arabic = language === 'ar';
+  document.querySelector('#subtask-heading').textContent = arabic ? 'المهام الفرعية' : 'Subtasks';
+  document.querySelector('#subtask-parent-title').textContent = subtaskParent.title;
+  document.querySelector('#subtask-input-label').textContent = arabic ? 'أضف خطوة صغيرة' : 'Add a small step';
+  subtaskInput.placeholder = arabic ? 'ما الخطوة التالية؟' : 'What is the next step?';
+  document.querySelector('#subtask-save').textContent = arabic ? 'إضافة مهمة فرعية' : 'Add subtask';
+  document.querySelector('#subtask-done').textContent = arabic ? 'تم' : 'Done';
+  document.querySelector('#subtask-close').setAttribute('aria-label', arabic ? 'إغلاق' : 'Close');
+  const children = tasks.filter(task => task.parent_id === subtaskParent.id);
+  document.querySelector('#subtask-progress').textContent = children.length
+    ? `${children.filter(task => task.completed).length}/${children.length} ${arabic ? 'مكتملة' : 'completed'}`
+    : (arabic ? 'قسّم المهمة إلى خطوات بسيطة. يمكنك إضافة أكثر من خطوة هنا.' : 'Break this task into small steps. Keep adding without closing this window.');
+  const preview = document.querySelector('#subtask-preview');
+  preview.replaceChildren();
+  children.forEach(task => {
+    const row = document.createElement('li');
+    row.textContent = `${task.completed ? '✓' : '○'} ${task.title}`;
+    row.classList.toggle('completed', Boolean(task.completed));
+    preview.appendChild(row);
+  });
+  preview.hidden = !children.length;
+}
+
+function addSubtask(task) {
+  if (task.parent_id) return;
+  subtaskParent = task;
+  subtaskInput.value = '';
+  subtaskError.textContent = '';
+  renderSubtaskDialog();
+  subtaskDialog.showModal();
+  subtaskInput.focus();
+}
+
+document.querySelector('#subtask-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (subtaskSaving || !subtaskInput.value.trim()) return;
+  const task = subtaskParent;
+  const title = subtaskInput.value.trim();
+  subtaskSaving = true;
+  subtaskError.textContent = '';
+  document.querySelector('#subtask-save').disabled = true;
+  subtaskInput.readOnly = true;
   try {
     await api('/api/tasks', {
       method: 'POST',
-      body: JSON.stringify({ title: title.trim(), parent_id: task.id, task_date: task.task_date, location: task.location }),
+      body: JSON.stringify({ title, parent_id: task.id, task_date: task.task_date, location: task.location }),
     });
     await loadTasks();
+    subtaskInput.value = '';
+    renderSubtaskDialog();
     announcer.textContent = language === 'ar' ? 'تمت إضافة المهمة الفرعية.' : 'Subtask added.';
-  } catch (err) { error.textContent = err.message; }
-}
+    await loadActiveDays();
+  } catch (err) { subtaskError.textContent = err.message; }
+  finally {
+    subtaskSaving = false;
+    document.querySelector('#subtask-save').disabled = false;
+    subtaskInput.readOnly = false;
+    if (subtaskDialog.open) subtaskInput.focus();
+  }
+});
+function closeSubtaskDialog() { if (!subtaskSaving) subtaskDialog.close(); }
+document.querySelector('#subtask-close').addEventListener('click', closeSubtaskDialog);
+document.querySelector('#subtask-done').addEventListener('click', closeSubtaskDialog);
+subtaskDialog.addEventListener('cancel', event => { if (subtaskSaving) event.preventDefault(); });
+subtaskDialog.addEventListener('close', () => {
+  list.querySelector(`[data-id="${subtaskParent?.id}"] .subtask-shortcut`)?.focus();
+});
 
 async function transferTask(task) {
   const toInbox = currentView !== 'inbox';
@@ -755,19 +825,60 @@ async function transferTask(task) {
   } catch (err) { error.textContent = err.message; }
 }
 
-async function toggleStar(task) {
-  try {
-    const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ starred: !Boolean(task.starred) }) });
-    task.starred = Boolean(updated.starred);
+function updateStarButton(button, task, level) {
+  const active = !task.completed && level > 0;
+  button.classList.toggle('starred', active);
+  button.classList.toggle('day-star', active && level === 2);
+  button.classList.toggle('remembered-star', Boolean(task.completed && level));
+  button.disabled = Boolean(task.completed);
+  button.setAttribute('aria-pressed', String(active));
+  const description = task.completed
+    ? (language === 'ar' ? 'المهمة مكتملة؛ النجمة غير محسوبة' : 'Completed; star does not count')
+    : (language === 'ar' ? ['تمييز بنجمة', 'اجعلها مهمة اليوم', 'إزالة النجمة'] : ['Star task', 'Make task of the day', 'Remove star'])[level];
+  button.setAttribute('aria-label', `${description}: ${task.title}`);
+  button.title = description;
+}
+
+function toggleStar(task, steps = 1) {
+  starWrites = starWrites.then(async () => {
+    task = tasks.find(entry => entry.id === task.id) || task;
+    if (task.completed) return;
+    error.textContent = '';
+    try {
+      const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ starred: (Number(task.starred) + steps) % 3 }) });
+      task.starred = Number(updated.starred);
+    } catch (err) {
+      error.textContent = language === 'ar' && err.message.includes('three') ? 'يمكن تمييز ثلاث مهام غير مكتملة فقط في هذه القائمة.'
+        : language === 'ar' && err.message.includes('one task of the day') ? 'توجد مهمة اليوم بالفعل. أزل نجمتها الحمراء أولًا.' : err.message;
+    }
     render();
-  } catch (err) { error.textContent = language === 'ar' && err.message.includes('three') ? 'يمكن وضع نجمة على ثلاث مهام فقط في هذه القائمة.' : err.message; }
+  });
+  return starWrites;
+}
+
+function queueStarClick(task) {
+  const pending = pendingStarClicks.get(task.id) || { task, steps: 0 };
+  clearTimeout(pending.timer);
+  pending.steps += 1;
+  pending.timer = setTimeout(() => flushStarClicks(), 350);
+  pendingStarClicks.set(task.id, pending);
+  const button = list.querySelector(`[data-id="${task.id}"] [data-star]`);
+  updateStarButton(button, task, (Number(task.starred) + pending.steps) % 3);
+}
+
+async function flushStarClicks() {
+  for (const [id, pending] of pendingStarClicks) {
+    clearTimeout(pending.timer);
+    pendingStarClicks.delete(id);
+    toggleStar(pending.task, pending.steps);
+  }
+  await starWrites;
 }
 
 async function changeHierarchy(task, parentId) {
   try {
-    const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ parent_id: parentId }) });
-    task.parent_id = updated.parent_id;
-    render();
+    await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ parent_id: parentId }) });
+    await loadTasks();
     announcer.textContent = parentId ? 'Task enlisted.' : 'Task made independent.';
   } catch (err) { error.textContent = err.message; }
 }
@@ -858,7 +969,7 @@ list.addEventListener('click', event => {
   const transfer = event.target.closest('[data-transfer]');
   if (transfer) { transferTask(tasks.find(task => task.id === Number(transfer.closest('.task').dataset.id))); return; }
   const star = event.target.closest('[data-star]');
-  if (star) { toggleStar(tasks.find(task => task.id === Number(star.closest('.task').dataset.id))); return; }
+  if (star && !star.disabled) { queueStarClick(tasks.find(task => task.id === Number(star.closest('.task').dataset.id))); return; }
   const enlist = event.target.closest('[data-enlist]');
   if (enlist && !enlist.disabled) {
     const task = tasks.find(entry => entry.id === Number(enlist.closest('.task').dataset.id));
@@ -997,6 +1108,7 @@ overdueList.addEventListener('click', async event => {
 });
 
 async function setView(view) {
+  await flushStarClicks();
   currentView = view;
   activeLabel = '';
   if (view !== 'lists') setListsEditing(false);
@@ -1514,6 +1626,7 @@ languageToggle.addEventListener('click', () => {
   applyLanguage();
 });
 workspaceToggle.addEventListener('click', async () => {
+  await flushStarClicks();
   workspace = workspace === 'personal' ? 'work' : 'personal';
   localStorage.setItem('taskline-workspace', workspace);
   today = effectiveToday();

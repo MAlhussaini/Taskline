@@ -185,6 +185,53 @@ def valid_workspace(value: object) -> str:
     return workspace
 
 
+def task_star_state(db: sqlite3.Connection, workspace: str) -> dict:
+    return {row["id"]: dict(row) for row in db.execute(
+        "SELECT id, completed, starred, location, task_date, workspace FROM tasks WHERE workspace = ? ORDER BY position, id",
+        (workspace,),
+    )}
+
+
+def star_scope(task: dict) -> tuple:
+    return (task["workspace"], task["location"], task["task_date"] if task["location"] == "day" else None)
+
+
+def reconcile_task_stars(db: sqlite3.Connection, workspace: str, previous: dict) -> None:
+    """Reserve existing active stars first; restored/moved tasks use remaining slots.
+
+    starred: 0 = none, 1 = yellow (remembered when complete), 2 = task of the day.
+    A completed red star is remembered as yellow, never automatically as red.
+    Must run in the same write transaction as changes to completion/list membership.
+    """
+    current = task_star_state(db, workspace)
+
+    def newcomer(task):
+        old = previous.get(task["id"])
+        return not old or old["completed"] or star_scope(old) != star_scope(task)
+
+    counts, red_counts = {}, {}
+    for task in sorted(current.values(), key=newcomer):
+        level = task["starred"]
+        if not level:
+            continue
+        if task["completed"]:
+            level = 1
+        else:
+            old = previous.get(task["id"])
+            if old and old["completed"]:
+                level = 1
+            scope = star_scope(task)
+            if counts.get(scope, 0) >= 3:
+                level = 0
+            else:
+                if level == 2 and red_counts.get(scope, 0):
+                    level = 1
+                counts[scope] = counts.get(scope, 0) + 1
+                red_counts[scope] = red_counts.get(scope, 0) + (level == 2)
+        if level != task["starred"]:
+            db.execute("UPDATE tasks SET starred = ? WHERE id = ?", (level, task["id"]))
+
+
 def sync_task_completion_from_children(db: sqlite3.Connection, task_id: int) -> None:
     child_counts = db.execute(
         "SELECT COUNT(*), SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) FROM tasks WHERE parent_id = ?",
@@ -771,6 +818,8 @@ class TodoHandler(BaseHTTPRequestHandler):
                     raise ValueError("Invalid overdue action")
                 client_today = valid_date(payload.get("target_date", date.today().isoformat()))
                 with connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    previous_stars = task_star_state(db, workspace)
                     row = db.execute("SELECT id, parent_id, task_date, routine_occurrence_id FROM tasks WHERE id = ? AND workspace = ?", (task_id, workspace)).fetchone()
                     if row is None:
                         self.send_json({"error": "Task not found"}, 404)
@@ -804,6 +853,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                                        planning_value = NULL, overdue_ignored = 0 WHERE id = ?""",
                                     (next_position + offset, member[0]),
                                 )
+                    reconcile_task_stars(db, workspace, previous_stars)
                 self.send_json({"ok": True, "action": action})
             except (ValueError, json.JSONDecodeError) as error:
                 self.send_json({"error": str(error)}, 400)
@@ -881,6 +931,8 @@ class TodoHandler(BaseHTTPRequestHandler):
             if not title or len(title) > 280:
                 raise ValueError("Enter a task between 1 and 280 characters")
             with connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                previous_stars = task_star_state(db, workspace)
                 if parent_id is not None:
                     parent = db.execute(
                         "SELECT id, position, task_date, location, planning_kind, planning_value, parent_id FROM tasks WHERE id = ? AND workspace = ?",
@@ -916,7 +968,8 @@ class TodoHandler(BaseHTTPRequestHandler):
                     (title, position, task_date, location, planning_kind, planning_value, parent_id, workspace),
                 )
                 if parent_id is not None:
-                    db.execute("UPDATE tasks SET completed = 0 WHERE id = ?", (parent_id,))
+                    db.execute("UPDATE tasks SET completed = 0, completed_at = NULL WHERE id = ?", (parent_id,))
+                reconcile_task_stars(db, workspace, previous_stars)
                 row = db.execute(
                     "SELECT id, title, position, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE id = ?",
                     (cursor.lastrowid,),
@@ -1185,21 +1238,8 @@ class TodoHandler(BaseHTTPRequestHandler):
                     updates.append("parent_id = ?")
                     values.append(parent_id)
                 if "starred" in payload:
-                    if not isinstance(payload["starred"], bool):
+                    if not isinstance(payload["starred"], (bool, int)) or payload["starred"] not in (0, 1, 2):
                         raise ValueError("Invalid starred status")
-                    if payload["starred"]:
-                        with connect() as check_db:
-                            scope = check_db.execute(
-                                "SELECT location, task_date FROM tasks WHERE id = ? AND workspace = ?", (task_id, workspace)
-                            ).fetchone()
-                            if scope is None:
-                                raise ValueError("Task not found")
-                            starred_count = check_db.execute(
-                                "SELECT COUNT(*) FROM tasks WHERE workspace = ? AND starred = 1 AND id != ? AND location = ? AND (? = 'inbox' OR task_date = ?)",
-                                (workspace, task_id, scope[0], scope[0], scope[1]),
-                            ).fetchone()[0]
-                        if starred_count >= 3:
-                            raise ValueError("Only three tasks can be starred in this list")
                     updates.append("starred = ?")
                     values.append(int(payload["starred"]))
                 if "planning_kind" in payload:
@@ -1214,6 +1254,8 @@ class TodoHandler(BaseHTTPRequestHandler):
                     raise ValueError("Nothing to update")
                 values.extend((task_id, workspace))
                 with connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    previous_stars = task_star_state(db, workspace)
                     previous_parent = db.execute("SELECT parent_id FROM tasks WHERE id = ? AND workspace = ?", (task_id, workspace)).fetchone()
                     cursor = db.execute(
                         f"UPDATE tasks SET {', '.join(updates)} WHERE id = ? AND workspace = ?",
@@ -1249,6 +1291,18 @@ class TodoHandler(BaseHTTPRequestHandler):
                             sync_task_completion_from_children(db, old_parent_id)
                         if parent_id is not None:
                             sync_task_completion_from_children(db, parent_id)
+                    if payload.get("starred"):
+                        state = task_star_state(db, workspace)
+                        task = state[task_id]
+                        if task["completed"]:
+                            raise ValueError("Completed tasks cannot be starred")
+                        others = [other for other in state.values() if other["id"] != task_id
+                                  and not other["completed"] and other["starred"] and star_scope(other) == star_scope(task)]
+                        if len(others) >= 3:
+                            raise ValueError("Only three tasks can be starred in this list")
+                        if task["starred"] == 2 and any(other["starred"] == 2 for other in others):
+                            raise ValueError("Only one task of the day is allowed in this list")
+                    reconcile_task_stars(db, workspace, previous_stars)
                     row = db.execute(
                         "SELECT id, title, position, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE id = ?",
                         (task_id,),
@@ -1345,6 +1399,8 @@ class TodoHandler(BaseHTTPRequestHandler):
         try:
             task_id = int(path.rsplit("/", 1)[-1])
             with connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                previous_stars = task_star_state(db, workspace)
                 task_row = db.execute("SELECT task_date, location, parent_id, routine_occurrence_id FROM tasks WHERE id = ? AND workspace = ?", (task_id, workspace)).fetchone()
                 if task_row is None:
                     self.send_json({"error": "Task not found"}, 404)
@@ -1364,6 +1420,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                     if child_counts[0] > 0:
                         db.execute("UPDATE tasks SET completed = ? WHERE id = ?", (int(child_counts[0] == child_counts[1]), parent_id))
                     sync_ancestor_completion(db, parent_id)
+                reconcile_task_stars(db, workspace, previous_stars)
                 rows = db.execute(
                     "SELECT id FROM tasks WHERE workspace = ? AND location = ? AND (? = 'inbox' OR task_date = ?) ORDER BY position, id",
                     (workspace, task_row[1], task_row[1], task_row[0]),

@@ -14,9 +14,9 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png?v=1">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=12">
+  <link rel="stylesheet" href="/styles.css?v=13">
   <script src="/calendar-utils.js?v=1" defer></script>
-  <script src="/app.js?v=12" defer></script>
+  <script src="/app.js?v=13" defer></script>
 </head>
 <body>
   <header class="app-header">
@@ -164,6 +164,24 @@
     <button id="nav-lists" type="button"><span aria-hidden="true">📋</span>Lists</button>
     <button id="nav-settings" type="button" disabled title="Settings will be available later"><span aria-hidden="true">⚙</span>Settings</button>
   </nav>
+  <dialog id="subtask-dialog" class="label-dialog subtask-dialog" aria-labelledby="subtask-heading" aria-describedby="subtask-parent-title">
+    <form id="subtask-form" autocomplete="off">
+      <div class="dialog-heading">
+        <h2 id="subtask-heading">Subtasks</h2>
+        <button type="button" id="subtask-close" aria-label="Close">×</button>
+      </div>
+      <p id="subtask-parent-title" class="subtask-parent-title"></p>
+      <p id="subtask-progress" role="status"></p>
+      <ul id="subtask-preview" class="subtask-preview"></ul>
+      <label id="subtask-input-label" for="subtask-input">Add a small step</label>
+      <input id="subtask-input" maxlength="280" required>
+      <p id="subtask-error" class="error" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="subtask-done" type="button">Done</button>
+        <button id="subtask-save" class="save-label" type="submit">Add subtask</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="label-dialog" class="label-dialog">
     <form id="label-form" method="dialog">
       <div class="dialog-heading">

@@ -130,12 +130,53 @@ def main():
             original = dev.evaluate("tasks.map(task => task.id)")
             evaluate_async("toggleStar(tasks[1])")
             assert dev.evaluate("Number(list.firstElementChild.dataset.id)") == original[1]
-            evaluate_async("toggleStar(tasks.find(task => task.id === " + str(original[1]) + "))")
+            evaluate_async("toggleStar(tasks.find(task => task.id === " + str(original[1]) + "), 2)")
             assert dev.evaluate("[...list.children].map(row => Number(row.dataset.id))") == original
             evaluate_async("toggleTask(tasks[0])")
             assert dev.evaluate("Number(list.lastElementChild.dataset.id)") == original[0]
             evaluate_async("toggleTask(tasks.find(task => task.id === " + str(original[0]) + "))")
             assert dev.evaluate("[...list.children].map(row => Number(row.dataset.id))") == original
+
+            # Two quick real clicks must persist red, not get lost during re-render.
+            first_star = f'[data-id="{original[0]}"] [data-star]'
+            click(first_star)
+            click(first_star)
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 2"))
+            assert dev.evaluate("document.querySelector('.day-star-badge') !== null")
+            assert dev.evaluate(f"getComputedStyle(document.querySelector({json.dumps(first_star)})).color === 'rgb(199, 53, 53)'")
+            click(first_star)
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 0"))
+            click(first_star)
+            # Completing while the star click is still pending must flush it first.
+            click(f'[data-id="{original[0]}"] [data-check]')
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).completed === 1"))
+            assert dev.evaluate(f"document.querySelector({json.dumps(first_star)}).disabled && !document.querySelector({json.dumps(first_star)}).classList.contains('starred')")
+            click(f'[data-id="{original[0]}"] [data-check]')
+            wait_for(lambda: dev.evaluate(f"tasks.find(task => task.id === {original[0]}).completed === 0"))
+            assert dev.evaluate(f"tasks.find(task => task.id === {original[0]}).starred === 1")
+            evaluate_async(f"toggleStar(tasks.find(task => task.id === {original[0]}), 2)")
+
+            # Add consecutive subtasks without native prompts or losing input focus.
+            click(".subtask-shortcut")
+            wait_for(lambda: dev.evaluate("subtaskDialog.open"))
+            for title in ("First small step", "خطوة فرعية ثانية واضحة"):
+                dev.evaluate(f"subtaskInput.value = {json.dumps(title)}")
+                click("#subtask-save")
+                try:
+                    wait_for(lambda: dev.evaluate("!subtaskSaving && subtaskInput.value === ''"))
+                except TimeoutError:
+                    screenshot("subtask-save-failure")
+                    raise AssertionError(dev.evaluate("({saving:subtaskSaving, error:subtaskError.textContent, open:subtaskDialog.open, errors:uiErrors, value:subtaskInput.value})"))
+                assert dev.evaluate("subtaskDialog.open && document.activeElement === subtaskInput")
+            assert dev.evaluate("document.querySelectorAll('#subtask-preview li').length === 2")
+            dev.evaluate("window.savedFetch = window.fetch; window.fetch = () => Promise.reject(new Error('Test subtask save failure')); subtaskInput.value = 'Keep this draft'")
+            click("#subtask-save")
+            wait_for(lambda: dev.evaluate("subtaskError.textContent.includes('Test subtask save failure')"))
+            assert dev.evaluate("subtaskInput.value === 'Keep this draft' && subtaskError.getBoundingClientRect().height > 0")
+            dev.evaluate("window.fetch = window.savedFetch")
+            click("#subtask-done")
+            wait_for(lambda: dev.evaluate("document.activeElement.classList.contains('subtask-shortcut')"))
+            assert dev.evaluate("document.querySelectorAll('.subtask-context').length === 2")
 
             for lang in ("en", "ar"):
                 dev.evaluate(f"language = '{lang}'; applyLanguage()")
@@ -143,6 +184,13 @@ def main():
                     dev.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width <= 600})
                     evaluate_async("setView('day')")
                     fits((lang, width, "day"))
+                    click(".subtask-shortcut")
+                    wait_for(lambda: dev.evaluate("subtaskDialog.open"))
+                    assert dev.evaluate("document.activeElement === subtaskInput")
+                    fits((lang, width, "subtask dialog"))
+                    if width == 390:
+                        screenshot(f"{lang}-subtask-dialog")
+                    click("#subtask-done")
                     assert dev.evaluate("document.querySelector('.task-tools').getClientRects().length === 0")
                     click("[data-task-more]")
                     assert dev.evaluate("document.querySelector('[data-task-more]').getAttribute('aria-expanded') === 'true'"), dev.evaluate("(() => { const r = document.querySelector('[data-task-more]').getBoundingClientRect(); return {rect:r.toJSON(), hit:document.elementFromPoint(r.x+r.width/2, r.y+r.height/2)?.outerHTML}; })()")
