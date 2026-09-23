@@ -577,6 +577,9 @@ function render() {
     const transferText = currentView === 'inbox' ? (language === 'ar' ? 'نقل إلى اليوم' : 'Move to today') : (language === 'ar' ? 'نقل إلى الحافظة' : 'Move to inbox');
     const parent = tasks.find(entry => entry.id === task.parent_id);
     const children = tasks.filter(entry => entry.parent_id === task.id);
+    const archiveRoot = parent || task;
+    const canArchive = archiveRoot.completed && archiveRoot.completed_at &&
+      tasks.filter(entry => entry.parent_id === archiveRoot.id).every(entry => entry.completed);
     const childContext = parent ? `<span class="sr-only">${escapeHtml(parent.title)}: </span>` : '';
     const subtaskShortcut = !task.parent_id && children.length ? `<button type="button" class="subtask-shortcut" data-add-subtask>＋ ${language === 'ar' ? 'مهام فرعية' : 'Subtasks'} · ${children.filter(child => child.completed).length}/${children.length}</button>` : '';
     const dayStarBadge = !task.completed && Number(task.starred) === 2 ? `<span class="day-star-badge">★ ${language === 'ar' ? 'مهمة اليوم' : 'Task of the day'}</span>` : '';
@@ -587,17 +590,18 @@ function render() {
       ${grip()}
       <span class="task-tools" id="task-tools-${task.id}" hidden>
       <span class="task-actions">
-        <button type="button" class="edit-button" data-edit aria-label="${language === 'ar' ? 'تعديل المهمة' : `Edit ${escapeHtml(task.title)}`} "><span aria-hidden="true">✏️</span></button>
         <button type="button" class="subtask-button" data-add-subtask aria-label="${task.parent_id ? (language === 'ar' ? 'المهام الفرعية بمستوى واحد فقط' : 'Subtasks are limited to one level') : (language === 'ar' ? 'إضافة مهمة فرعية' : 'Add subtask')}" ${task.parent_id ? 'disabled' : ''}><span aria-hidden="true">➕</span></button>
-        ${!task.parent_id && !task.routine_occurrence_id ? `<button type="button" class="routine-button" data-make-routine aria-label="${language === 'ar' ? 'تحويل إلى روتين' : 'Make recurring'}"><span aria-hidden="true">🔁</span></button>` : ''}
-        <button type="button" class="label-button" data-label aria-label="${language === 'ar' ? 'وسم المهمة' : `Label ${escapeHtml(task.title)}`} "><span aria-hidden="true">🏷️</span></button>
         <button type="button" data-day-star ${task.completed || Number(task.starred) === 2 ? 'disabled' : ''}><span aria-hidden="true">★</span></button>
-        ${task.routine_occurrence_id ? '' : `<button type="button" class="transfer-button" data-transfer aria-label="${transferText}: ${escapeHtml(task.title)}"><span aria-hidden="true">${transferIcon}</span></button>`}
+        <button type="button" class="label-button" data-label aria-label="${language === 'ar' ? 'وسم المهمة' : `Label ${escapeHtml(task.title)}`} "><span aria-hidden="true">🏷️</span></button>
+        <button type="button" class="routine-button" data-make-routine aria-label="${language === 'ar' ? 'تحويل إلى روتين' : 'Make recurring'}" ${task.parent_id || task.routine_occurrence_id ? 'disabled' : ''}><span aria-hidden="true">🔁</span></button>
+        <button type="button" data-archive ${canArchive ? '' : 'disabled'} title="${language === 'ar' ? 'نقل المهمة وخطواتها المكتملة إلى يوم الإنجاز' : 'Move the completed task and its subtasks to the completion day'}"><span aria-hidden="true">🗃️</span></button>
+        <button type="button" class="transfer-button" data-transfer aria-label="${transferText}: ${escapeHtml(task.title)}" ${task.routine_occurrence_id ? 'disabled' : ''}><span aria-hidden="true">${transferIcon}</span></button>
+        <button type="button" class="edit-button" data-edit aria-label="${language === 'ar' ? 'تعديل المهمة' : `Edit ${escapeHtml(task.title)}`} "><span aria-hidden="true">✏️</span></button>
         <button type="button" class="delete-button" data-delete aria-label="${language === 'ar' ? 'حذف المهمة' : `Delete ${escapeHtml(task.title)}`} "><span aria-hidden="true">🗑️</span></button>
       </span>
       <span class="hierarchy-actions">
-        <button type="button" data-enlist aria-label="${language === 'ar' ? 'جعلها تابعة للمهمة السابقة' : 'Make task a child of the previous task'}" ${index === 0 || activeLabel || task.parent_id ? 'disabled' : ''}>📨</button>
         <button type="button" data-outlist aria-label="${language === 'ar' ? 'جعل المهمة مستقلة' : 'Make task independent'}" ${task.parent_id ? '' : 'disabled'}>✉️</button>
+        <button type="button" data-enlist aria-label="${language === 'ar' ? 'جعلها تابعة للمهمة السابقة' : 'Make task a child of the previous task'}" ${index === 0 || activeLabel || task.parent_id ? 'disabled' : ''}>📨</button>
       </span>
       <span class="order-controls">
         <button type="button" data-move="up" aria-label="${language === 'ar' ? 'نقل لأعلى' : 'Move up'}" ${activeLabel || peerIndex <= 0 ? 'disabled' : ''}>↑</button>
@@ -611,6 +615,7 @@ function render() {
       ['[data-transfer]', currentView === 'inbox' ? 'To today' : 'To inbox', currentView === 'inbox' ? 'إلى اليوم' : 'إلى الحافظة'],
       ['[data-delete]', 'Delete', 'حذف'], ['[data-enlist]', 'Nest task', 'جعلها فرعية'],
       ['[data-day-star]', 'Task of the day', 'مهمة اليوم'],
+      ['[data-archive]', 'Archive (completion day)', 'أرشفة (إلى يوم الإنجاز)'],
       ['[data-outlist]', 'Unnest task', 'جعلها مستقلة'], ['[data-move="up"]', 'Move up', 'نقل لأعلى'],
       ['[data-move="down"]', 'Move down', 'نقل لأسفل'],
     ];
@@ -843,6 +848,19 @@ async function transferTask(task) {
   } catch (err) { error.textContent = err.message; }
 }
 
+async function archiveTask(task) {
+  await flushStarClicks();
+  error.textContent = '';
+  document.querySelector('#task-notice').textContent = '';
+  try {
+    const result = await api(`/api/tasks/${task.id}/archive`, {
+      method: 'POST', body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+    });
+    await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
+    document.querySelector('#task-notice').textContent = language === 'ar' ? `تمت الأرشفة إلى يوم ${result.task_date}.` : `Archived to ${result.task_date}.`;
+  } catch (err) { error.textContent = err.message; }
+}
+
 function updateStarButton(button, task, level) {
   const active = !task.completed && level > 0;
   button.classList.toggle('starred', active);
@@ -1010,6 +1028,14 @@ list.addEventListener('keydown', event => {
 });
 
 list.addEventListener('click', event => {
+  if (event.target.closest('button')?.disabled) return;
+  const archive = event.target.closest('[data-archive]');
+  if (archive) {
+    archive.disabled = true;
+    archiveTask(tasks.find(task => task.id === Number(archive.closest('.task').dataset.id)))
+      .finally(() => { if (archive.isConnected) archive.disabled = false; });
+    return;
+  }
   const more = event.target.closest('[data-task-more]');
   if (more) { setTaskTools(more.closest('.task'), more.getAttribute('aria-expanded') !== 'true'); return; }
   const check = event.target.closest('[data-check]');
@@ -1172,6 +1198,7 @@ overdueList.addEventListener('click', async event => {
 
 async function setView(view) {
   await flushStarClicks();
+  document.querySelector('#task-notice').textContent = '';
   currentView = view;
   activeLabel = '';
   if (view !== 'lists') setListsEditing(false);

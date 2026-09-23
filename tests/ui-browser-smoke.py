@@ -274,6 +274,10 @@ def main():
                     assert dev.evaluate("document.querySelector('[data-task-more]').getAttribute('aria-expanded') === 'true'"), dev.evaluate("(() => { const r = document.querySelector('[data-task-more]').getBoundingClientRect(); return {rect:r.toJSON(), hit:document.elementFromPoint(r.x+r.width/2, r.y+r.height/2)?.outerHTML}; })()")
                     assert dev.evaluate("[...document.querySelectorAll('.task-tools:not([hidden]) button')].every(el => el.getBoundingClientRect().height >= 44)")
                     fits((lang, width, "task tools"))
+                    assert dev.evaluate("[...document.querySelectorAll('.task-tools:not([hidden]) button')].map(button => Object.keys(button.dataset)[0])") == [
+                        'addSubtask', 'dayStar', 'label', 'makeRoutine', 'archive', 'transfer',
+                        'edit', 'delete', 'outlist', 'enlist', 'move', 'move',
+                    ]
                     if width == 390:
                         screenshot(f"{lang}-tasks")
                     click(".task:nth-child(2) [data-task-more]")
@@ -323,6 +327,21 @@ def main():
             assert family_is_together()
             dev.evaluate(f"window.scrollTo(0, list.querySelector('[data-id=\"{original[0]}\"]').getBoundingClientRect().top + scrollY - 70)")
             screenshot("ar-completed-family", scroll_top=False)
+
+            # Archive a completed inbox task via the actual menu and verify the stored day.
+            evaluate_async("setView('inbox')")
+            archive_id = dev.evaluate("tasks[0].id")
+            evaluate_async("toggleTask(tasks[0])")
+            with app.connect() as db:
+                db.execute("UPDATE tasks SET completed_at = '2026-09-23 22:00:00' WHERE id = ?", (archive_id,))
+            evaluate_async("loadTasks()")
+            click("[data-task-more]")
+            dev.call("Emulation.setTimezoneOverride", {"timezoneId": "Asia/Riyadh"})
+            click("[data-archive]")
+            wait_for(lambda: dev.evaluate("tasks.length === 0 && document.querySelector('#task-notice').textContent.includes('2026-09-23')"))
+            with app.connect() as db:
+                archived = db.execute("SELECT location, task_date, completed_at FROM tasks WHERE id = ?", (archive_id,)).fetchone()
+                assert tuple(archived) == ('day', '2026-09-23', '2026-09-23 22:00:00')
 
             # An API failure must be visible even when the task composer is hidden.
             evaluate_async("setView('lists')")

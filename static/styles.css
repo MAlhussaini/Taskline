@@ -81,6 +81,8 @@ html{scrollbar-gutter:stable}body{-webkit-font-smoothing:antialiased;text-render
 .subtask-dialog .dialog-actions button { min-height: 44px; }
 [hidden] { display: none !important; }
 .app-error:empty { display: none; }
+.task-notice:empty { display: none; }
+.task-notice { margin: 0 0 12px; padding: 12px; border-radius: 10px; background: var(--soft); color: var(--green); font-size: 13px; line-height: 1.6; }
 .app-error {
   position: sticky;
   top: calc(68px + env(safe-area-inset-top));

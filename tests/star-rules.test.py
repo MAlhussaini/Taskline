@@ -1,4 +1,4 @@
-"""Real HTTP regressions for star limits and completion; temporary SQLite only."""
+"""Real HTTP regressions for stars, completion and archiving; temporary SQLite only."""
 import concurrent.futures
 import importlib.util
 import json
@@ -160,6 +160,58 @@ class StarRules(unittest.TestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             statuses = list(pool.map(lambda task: self.update(task, starred=2, expected=None)[0], starred))
         self.assertEqual(sorted(statuses), [200, 400, 400])
+
+    def test_completion_day_boundaries(self):
+        for stamp, workspace, expected in [
+            ("2026-09-23 23:59:59", "personal", "2026-09-23"),
+            ("2026-09-24 00:00:00", "personal", "2026-09-24"),
+            ("2026-09-23 20:59:59", "work", "2026-09-23"),
+            ("2026-09-23 21:00:00", "work", "2026-09-24"),
+        ]:
+            self.assertEqual(app.completion_day(stamp, workspace, "Asia/Riyadh"), expected)
+        self.assertEqual(app.completion_day("2026-09-24T01:00:00+03:00", "personal", "Asia/Riyadh"), "2026-09-23")
+
+    def test_archive_family_retains_completion_times_and_is_idempotent(self):
+        parent = self.create(location="inbox", label="test")
+        child = self.create(parent_id=parent)
+        self.update(parent, completed=True)
+        with app.connect() as db:
+            db.execute("UPDATE tasks SET completed_at = '2026-09-24 00:00:00' WHERE id = ?", (parent,))
+            db.execute("UPDATE tasks SET completed_at = '2026-09-23 22:00:00' WHERE id = ?", (child,))
+        result = self.request("POST", f"/api/tasks/{child}/archive", {"timezone": "Asia/Riyadh"})
+        self.assertEqual(result["task_date"], "2026-09-24")
+        self.assertEqual(result["task_ids"], [parent, child])
+        self.assertEqual(self.tasks(location="inbox"), [])
+        archived = self.tasks(date="2026-09-24")
+        self.assertEqual([task["completed_at"] for task in archived], ["2026-09-24 00:00:00", "2026-09-23 22:00:00"])
+        self.assertEqual(archived[1]["parent_id"], parent)
+        self.assertTrue(all(task["completed"] for task in archived))
+        self.request("POST", f"/api/tasks/{parent}/archive", {"timezone": "Asia/Riyadh"})
+        self.assertEqual(self.tasks(date="2026-09-24"), archived)
+
+    def test_archive_rejects_incomplete_family_missing_time_and_wrong_workspace(self):
+        parent = self.create(location="inbox")
+        child = self.create(parent_id=parent)
+        self.create(parent_id=parent)
+        self.update(child, completed=True)
+        self.request("POST", f"/api/tasks/{child}/archive", {}, expected=400)
+        self.assertEqual(len(self.tasks(location="inbox")), 3)
+        self.update(parent, completed=True)
+        self.request("POST", f"/api/tasks/{parent}/archive", {}, workspace="work", expected=404)
+        self.request("POST", f"/api/tasks/{parent}/archive", {"timezone": "Not/AZone"}, expected=400)
+        with app.connect() as db:
+            db.execute("UPDATE tasks SET completed_at = NULL WHERE id = ?", (parent,))
+        self.request("POST", f"/api/tasks/{parent}/archive", {}, expected=400)
+
+    def test_archive_work_uses_midnight_and_moves_existing_day_task(self):
+        task = self.create(workspace="work", task_date="2026-09-01")
+        self.update(task, workspace="work", completed=True)
+        with app.connect() as db:
+            db.execute("UPDATE tasks SET completed_at = '2026-09-23 22:00:00' WHERE id = ?", (task,))
+        result = self.request("POST", f"/api/tasks/{task}/archive", {"timezone": "Asia/Riyadh"}, workspace="work")
+        self.assertEqual(result["task_date"], "2026-09-24")
+        self.assertEqual(self.tasks(workspace="work", date="2026-09-24")[0]["id"], task)
+        self.assertEqual(self.tasks(workspace="work", date="2026-09-01"), [])
 
 
 if __name__ == "__main__":

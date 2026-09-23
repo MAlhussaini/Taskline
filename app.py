@@ -8,7 +8,8 @@ import base64
 import calendar
 import re
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -18,6 +19,21 @@ ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "tasks.db"
 STATIC_DIR = ROOT / "static"
 UPLOAD_DIR = ROOT / "uploads"
+WORKSPACE_DAY_START_HOURS = {"personal": 3, "work": 0}
+
+
+def completion_day(completed_at: str | None, workspace: str, timezone_name: str) -> str:
+    if not completed_at:
+        raise ValueError("Completion time is unavailable for this task")
+    try:
+        local_zone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        raise ValueError("Invalid time zone") from None
+    completed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    if completed.tzinfo is None:
+        completed = completed.replace(tzinfo=timezone.utc)  # SQLite CURRENT_TIMESTAMP is UTC.
+    local = completed.astimezone(local_zone)
+    return (local - timedelta(hours=WORKSPACE_DAY_START_HOURS[workspace])).date().isoformat()
 
 
 def connect() -> sqlite3.Connection:
@@ -808,6 +824,39 @@ class TodoHandler(BaseHTTPRequestHandler):
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 self.send_json({"error": str(error)}, 400)
             return
+        archive_match = re.fullmatch(r"/api/tasks/(\d+)/archive", path)
+        if archive_match:
+            try:
+                task_id = int(archive_match.group(1))
+                payload = self.read_json()
+                with connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    task = db.execute("SELECT * FROM tasks WHERE id = ? AND workspace = ?", (task_id, workspace)).fetchone()
+                    if task is None:
+                        self.send_json({"error": "Task not found"}, 404)
+                        return
+                    root_id = task["parent_id"] or task_id
+                    family = db.execute(
+                        "SELECT * FROM tasks WHERE workspace = ? AND (id = ? OR parent_id = ?) ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, position, id",
+                        (workspace, root_id, root_id, root_id),
+                    ).fetchall()
+                    root = family[0]
+                    if not all(member["completed"] for member in family):
+                        raise ValueError("Complete the task and all its subtasks before archiving")
+                    target_date = completion_day(root["completed_at"], workspace, payload.get("timezone", "Asia/Riyadh"))
+                    if not all(member["location"] == "day" and member["task_date"] == target_date for member in family):
+                        position = db.execute(
+                            "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE workspace = ? AND location = 'day' AND task_date = ?",
+                            (workspace, target_date),
+                        ).fetchone()[0]
+                        db.executemany(
+                            "UPDATE tasks SET location = 'day', task_date = ?, position = ?, planning_kind = 'date', planning_value = ?, overdue_ignored = 0 WHERE id = ?",
+                            [(target_date, position + offset, target_date, member["id"]) for offset, member in enumerate(family)],
+                        )
+                self.send_json({"ok": True, "task_date": target_date, "task_ids": [member["id"] for member in family]})
+            except (ValueError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
+            return
         overdue_match = re.fullmatch(r"/api/tasks/(\d+)/overdue-action", path)
         if overdue_match:
             try:
@@ -1418,7 +1467,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                         (parent_id,),
                     ).fetchone()
                     if child_counts[0] > 0:
-                        db.execute("UPDATE tasks SET completed = ? WHERE id = ?", (int(child_counts[0] == child_counts[1]), parent_id))
+                        sync_task_completion_from_children(db, parent_id)
                     sync_ancestor_completion(db, parent_id)
                 reconcile_task_stars(db, workspace, previous_stars)
                 rows = db.execute(
