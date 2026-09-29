@@ -140,6 +140,14 @@ def main():
             evaluate_async("loadTasks()")
             # Normal -> starred -> normal and completed -> incomplete restore the order.
             original = dev.evaluate("tasks.map(task => task.id)")
+            # A later red task must outrank an earlier yellow task, including after reload.
+            evaluate_async("toggleStar(tasks[0])")
+            evaluate_async(f"toggleStar(tasks.find(task => task.id === {original[2]}), 2)")
+            assert dev.evaluate("Number(list.firstElementChild.dataset.id)") == original[2]
+            evaluate_async("loadTasks()")
+            assert dev.evaluate("Number(list.firstElementChild.dataset.id)") == original[2]
+            evaluate_async(f"toggleStar(tasks.find(task => task.id === {original[2]}))")
+            evaluate_async(f"toggleStar(tasks.find(task => task.id === {original[0]}))")
             evaluate_async("toggleStar(tasks[1])")
             assert dev.evaluate("Number(list.firstElementChild.dataset.id)") == original[1]
             evaluate_async("toggleStar(tasks.find(task => task.id === " + str(original[1]) + "))")

@@ -8,8 +8,10 @@ globalThis.TasklineOrder = {
     }));
   },
   group(family) {
-    if (family.parent.completed) return 2;
-    return [family.parent, ...family.children].some(task => !task.completed && task.starred) ? 0 : 1;
+    if (family.parent.completed) return 3;
+    const active = [family.parent, ...family.children].filter(task => !task.completed);
+    if (active.some(task => Number(task.starred) === 2)) return 0;
+    return active.some(task => task.starred) ? 1 : 2;
   },
   order(source) {
     return this.families(source)
@@ -26,7 +28,7 @@ globalThis.TasklineOrder = {
     const rank = new Map(ids.map((id, index) => [id, index]));
     const families = this.families(source);
     const reordered = [...families];
-    for (let group = 0; group <= 2; group += 1) {
+    for (let group = 0; group <= 3; group += 1) {
       const slots = families.map((family, index) => ({ family, index }))
         .filter(({ family }) => rank.has(family.parent.id) && this.group(family) === group);
       const ordered = slots.map(({ family }) => family)
