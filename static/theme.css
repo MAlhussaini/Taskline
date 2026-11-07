@@ -1,0 +1,117 @@
+/* Shared theme tokens; workspace identity stays distinct in both appearances. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e3ece6;
+  --muted: #a9b9af;
+  --paper: #111a18;
+  --card: #192521;
+  --line: #3c5148;
+  --green: #91c8aa;
+  --soft: #263b31;
+  --accent: #e7a57f;
+  --on-primary: #102019;
+  --danger: #f0aaa1;
+  --danger-soft: #3b2827;
+  --gold: #ebc16c;
+  --gold-soft: #3c3422;
+  --purple: #c7b9df;
+  --purple-soft: #302d40;
+}
+html[data-theme="dark"][data-workspace="work"] {
+  --ink: #e5ebf4;
+  --muted: #acbbcd;
+  --paper: #141b24;
+  --card: #1c2633;
+  --line: #40536b;
+  --green: #acccf1;
+  --soft: #293d55;
+  --accent: #ddb088;
+  --on-primary: #142130;
+}
+html[data-theme="dark"] body {
+  /* Override the original body-level work palette; inherit the root tokens. */
+  --ink: inherit;
+  --muted: inherit;
+  --paper: inherit;
+  --card: inherit;
+  --line: inherit;
+  --green: inherit;
+  --soft: inherit;
+  --accent: inherit;
+  color: var(--ink);
+}
+.theme-toggle { display: grid; place-items: center; width: 40px; padding: 0; }
+.theme-toggle svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.theme-toggle .theme-sun, [data-theme="dark"] .theme-toggle .theme-moon { display: none; }
+[data-theme="dark"] .theme-toggle .theme-sun { display: block; }
+/* Retain comfortable controls without crowding the work title on narrow phones. */
+@media (max-width: 600px) {
+  .workspace-indicator { display: none; }
+  .header-action, #language-toggle, .workspace-toggle, .install-app { min-height: 40px; }
+}
+
+html[data-theme="dark"] .app-header,
+html[data-theme="dark"] .bottom-nav { background: var(--paper); }
+html[data-theme="dark"] :is(input, select, textarea) {
+  color: var(--ink);
+  background: var(--paper);
+  border-color: var(--line);
+  accent-color: var(--green);
+}
+html[data-theme="dark"] :is(input, textarea)::placeholder { color: var(--muted); opacity: 1; }
+html[data-theme="dark"] :is(button, a, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+html[data-theme="dark"] :is(.brand span, .day-chip.selected, .add-button,
+  .completed .check-button, .dialog-actions .save-label, .inbox-advanced-nav button.active,
+  .advanced-composer button, .inner-task-add button, .routine-form-actions button[type="submit"],
+  .list-form button, .checklist-item-form button, .lists-edit-toggle[aria-pressed="true"],
+  .weekday-options input:checked + span, .month-day.selected, #month-dialog-today) {
+  color: var(--on-primary);
+  background: var(--green);
+}
+html[data-theme="dark"] .add-button:hover { filter: brightness(1.08); }
+html[data-theme="dark"] :is(.task-label, .follow-option, .weekday-options span) {
+  color: var(--muted); background: var(--soft);
+}
+html[data-theme="dark"] .completed .task-title { color: var(--muted); }
+html[data-theme="dark"] .check-button { border-color: var(--muted); }
+html[data-theme="dark"] .grip i { background: var(--muted); }
+html[data-theme="dark"] .task > .star-button { color: var(--muted); }
+html[data-theme="dark"] .task > .star-button.starred { color: var(--gold); background: var(--gold-soft); }
+html[data-theme="dark"] .task > .star-button.starred.day-star,
+html[data-theme="dark"] .task > .star-button[data-star].long-press-ready,
+html[data-theme="dark"] .task .task-tools [data-day-star],
+html[data-theme="dark"] .day-star-badge { color: var(--danger); background: var(--danger-soft); }
+html[data-theme="dark"] .task > .star-button[data-star].long-press-ready { outline-color: var(--danger); }
+html[data-theme="dark"] .task > .star-button:disabled { color: var(--muted); background: transparent; opacity: .45; }
+html[data-theme="dark"] :is(.planning-badge, .routine-badge, .dream-image-placeholder) {
+  color: var(--purple); background: var(--purple-soft);
+}
+html[data-theme="dark"] :is(.follow-badge, .dream-card .dream-archive) { color: var(--green); background: var(--soft); }
+html[data-theme="dark"] :is(.error, .overdue-heading, .overdue-list li) { color: var(--danger); }
+html[data-theme="dark"] :is(.app-error, .overdue-section) { background: var(--danger-soft); border-color: #6c4845; }
+html[data-theme="dark"] :is(.overdue-list, .overdue-list li, .overdue-section .section-heading) { border-color: #6c4845; }
+html[data-theme="dark"] .overdue-actions button { color: var(--danger); background: var(--card); border-color: #6c4845; }
+html[data-theme="dark"] .overdue-actions [data-overdue-action="inbox"] { color: var(--green); background: var(--soft); border-color: var(--line); }
+html[data-theme="dark"] :is(.carried-badge, .missed-badge, .routine-card-actions .routine-delete,
+  .checklist-actions .checklist-delete, .checklist-item-actions [data-item-delete], .dialog-actions #remove-label) {
+  color: var(--danger); background: var(--danger-soft);
+}
+html[data-theme="dark"] .task .task-tools :is([data-delete], [data-cancel-task]:not(.complete-action)) {
+  color: var(--danger) !important; background: var(--danger-soft) !important;
+}
+html[data-theme="dark"] .task.completed.cancelled .check-button {
+  color: var(--danger); background: var(--danger-soft); border-color: var(--danger);
+}
+html[data-theme="dark"] .month-day.outside-month { color: var(--muted); }
+html[data-theme="dark"] .month-day.has-tasks:not(.selected) { color: var(--danger); background: var(--danger-soft); }
+html[data-theme="dark"] .month-day.has-tasks.all-complete:not(.selected) { color: #a1d7b5; background: #263b31; }
+html[data-theme="dark"] :is(.month-day.has-tasks i, .day-chip.has-tasks i, .status-dot.incomplete) { background: #f0aaa1; }
+html[data-theme="dark"] :is(.month-day.has-tasks.all-complete i, .day-chip.has-tasks.all-complete i, .status-dot.complete) { background: #91c8aa; }
+html[data-theme="dark"] :is(.month-day.selected.has-tasks i, .day-chip.selected.has-tasks i) { background: #8f342b; box-shadow: none; }
+html[data-theme="dark"] :is(.month-day.selected.has-tasks.all-complete i, .day-chip.selected.has-tasks.all-complete i) { background: #245139; }
+html[data-theme="dark"] dialog { box-shadow: 0 24px 70px #0007; }
+html[data-theme="dark"] dialog::backdrop { background: #070d12b3; }
+html[data-theme="dark"] .overdue-actions .overdue-complete { color: var(--green); background: var(--soft); border-color: var(--line); }

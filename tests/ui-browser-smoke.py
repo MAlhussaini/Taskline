@@ -15,12 +15,15 @@ import tempfile
 import threading
 import time
 import urllib.request
+import sys
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import websocket
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from accounts import COOKIE, password_hash
 helpers = runpy.run_path(str(ROOT / "tests/calendar-browser-smoke.py"))
 DevTools, wait_for = helpers["DevTools"], helpers["wait_for"]
 VIEWPORTS = ((320, 568), (390, 844), (568, 320), (768, 1024), (1440, 900))
@@ -38,6 +41,10 @@ def main():
         app.DB_PATH = Path(temporary) / "isolated.db"
         app.UPLOAD_DIR = Path(temporary) / "uploads"
         app.initialize_database()
+        store = app.initialize_accounts('owner@example.test', Path(temporary) / 'state', Path(temporary) / 'backups')
+        with store.connect() as db:
+            db.execute('UPDATE auth_users SET password_hash=? WHERE is_owner=1', (password_hash('fixture-browser-password'),))
+        session_token = store.issue_session(1, 'UI regression tests')
 
         class QuietHandler(app.TodoHandler):
             def log_message(self, *args):
@@ -62,13 +69,14 @@ def main():
             dev = DevTools(socket)
             dev.call("Runtime.enable")
             dev.call("Page.enable")
+            dev.call('Network.setCookie', {'name':COOKIE, 'value':session_token, 'url':origin, 'secure':True, 'httpOnly':True, 'sameSite':'Strict', 'expires':time.time()+86400})
             dev.call("Page.addScriptToEvaluateOnNewDocument", {"source": """
               window.uiErrors = [];
               addEventListener('error', e => uiErrors.push(e.message));
               addEventListener('unhandledrejection', e => uiErrors.push(String(e.reason)));
             """})
             dev.call("Page.navigate", {"url": origin})
-            wait_for(lambda: dev.evaluate("document.readyState === 'complete' && typeof today === 'string'"))
+            wait_for(lambda: dev.evaluate("document.readyState === 'complete' && window.tasklineReady === true"))
             assert dev.evaluate("document.activeElement.id !== 'task-input'")
             date = dev.evaluate("today")
 
@@ -76,7 +84,7 @@ def main():
                 req = urllib.request.Request(
                     f"{origin}{path}?workspace={workspace}",
                     data=json.dumps(payload).encode(),
-                    headers={"Content-Type": "application/json"}, method="POST",
+                    headers={"Content-Type": "application/json", "Cookie":COOKIE+'='+session_token}, method="POST",
                 )
                 with urllib.request.urlopen(req) as response:
                     return json.load(response)
@@ -283,8 +291,8 @@ def main():
                     assert dev.evaluate("[...document.querySelectorAll('.task-tools:not([hidden]) button')].every(el => el.getBoundingClientRect().height >= 44)")
                     fits((lang, width, "task tools"))
                     assert dev.evaluate("[...document.querySelectorAll('.task-tools:not([hidden]) button')].map(button => Object.keys(button.dataset)[0])") == [
-                        'addSubtask', 'dayStar', 'label', 'makeRoutine', 'archive', 'transfer',
-                        'edit', 'delete', 'outlist', 'enlist', 'move', 'move',
+                        'addSubtask', 'dayStar', 'edit', 'cancelTask', 'delete',
+                        'label', 'makeRoutine', 'archive', 'transfer', 'outlist', 'enlist', 'move', 'move',
                     ]
                     if width == 390:
                         screenshot(f"{lang}-tasks")
@@ -374,6 +382,116 @@ def main():
             wait_for(lambda: dev.evaluate("workspace === 'work'"))
             dev.evaluate("installApp.hidden = false")
             fits("work header with install button")
+            # Theme behavior and surfaces use the real browser and isolated data above.
+            dev.call("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-color-scheme", "value": "dark"}]})
+            wait_for(lambda: dev.evaluate("document.documentElement.dataset.theme === 'dark'"))
+            assert dev.evaluate("getComputedStyle(document.body).backgroundColor") == 'rgb(20, 27, 36)'
+            # Keyboard toggle is a native accessible button, and manual choice wins over OS.
+            dev.evaluate("document.querySelector('#theme-toggle').focus()")
+            assert dev.evaluate('document.activeElement.id') == 'theme-toggle'
+            dev.call("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "text": "\r"})
+            dev.call("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
+            wait_for(lambda: dev.evaluate("TasklineStorage.getItem('taskline-theme') === 'light'"))
+            click("#theme-toggle")
+            dev.call("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-color-scheme", "value": "light"}]})
+            assert dev.evaluate("document.documentElement.dataset.theme") == 'dark'
+            dev.call("Page.reload")
+            wait_for(lambda: dev.evaluate("document.readyState === 'complete' && typeof TasklineTheme === 'object' && document.querySelector('#theme-toggle').getAttribute('aria-pressed') === 'true'"))
+            assert dev.evaluate("document.documentElement.dataset.theme") == 'dark'
+
+            def dark_surfaces(context):
+                bright = dev.evaluate("""(() => {
+                  const selectors = 'input:not([type=checkbox]):not([type=radio]), select, textarea, .task, .checklist-card, .routine-form, .routine-card, .routine-stats, .dream-card, .history-group, dialog[open], .app-header, .bottom-nav, .overdue-section, .app-error';
+                  return [...document.querySelectorAll(selectors)].filter(el => {
+                    if (!el.getClientRects().length) return false;
+                    const channels = getComputedStyle(el).backgroundColor.match(/[\\d.]+/g).map(Number);
+                    return channels.slice(0, 3).every(value => value > 120) && channels[3] !== 0;
+                  }).map(el => el.id || el.className);
+                })()""")
+                assert not bright, (context, 'unexpected light surfaces', bright)
+
+            for space in ('personal', 'work'):
+                dev.evaluate(f"workspace = '{space}'; TasklineStorage.setItem('taskline-workspace', workspace); applyWorkspace()")
+                expected = 'rgb(17, 26, 24)' if space == 'personal' else 'rgb(20, 27, 36)'
+                assert dev.evaluate("getComputedStyle(document.body).backgroundColor") == expected
+                assert dev.evaluate("document.querySelector('meta[name=theme-color]').content") == ('#111a18' if space == 'personal' else '#141b24')
+                for lang in ('en', 'ar'):
+                    dev.evaluate(f"language = '{lang}'; applyLanguage()")
+                    assert dev.evaluate("document.querySelector('#theme-toggle').getAttribute('aria-label')") == ('الوضع الداكن' if lang == 'ar' else 'Dark mode')
+                    for width, height in VIEWPORTS:
+                        dev.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width <= 600})
+                        dev.evaluate("installApp.hidden = false")
+                        for view in ('day', 'lists', 'routines', 'inbox'):
+                            evaluate_async(f"setView('{view}')")
+                            if view == 'day':
+                                click('[data-task-more]')
+                            if view == 'routines':
+                                evaluate_async("routineStats.hidden = false; loadRoutineStats()")
+                                # Canvas colors refresh immediately when switching themes.
+                                dark_color = dev.evaluate("routineChart.getContext('2d').strokeStyle")
+                                dev.evaluate("TasklineTheme.toggle()")
+                                assert dev.evaluate("routineChart.getContext('2d').strokeStyle") != dark_color
+                                dev.evaluate("TasklineTheme.toggle()")
+                                assert dev.evaluate("routineChart.getContext('2d').strokeStyle") == dark_color
+                            context = (space, lang, width, view, 'dark')
+                            fits(context)
+                            dark_surfaces(context)
+                            if width == 390 or (width == 1440 and view == 'day'):
+                                screenshot(f'dark-{space}-{lang}-{width}-{view}')
+                        for view in ('dreams', 'history'):
+                            evaluate_async(f"setInboxSubView('{view}')")
+                            fits((space, lang, width, view))
+                            dark_surfaces((space, lang, width, view))
+                        evaluate_async("setView('day')")
+                        click('#month-picker')
+                        wait_for(lambda: dev.evaluate("monthDialog.open && !monthGrid.classList.contains('loading')"))
+                        dark_surfaces('month')
+                        fits('dark month')
+                        if width == 390:
+                            screenshot(f'dark-{space}-{lang}-calendar')
+                        dev.evaluate('monthDialog.close()')
+                        if width in (320, 390):
+                            for dialog_id in ('label-dialog', 'edit-dialog', 'subtask-dialog', 'dream-dialog', 'install-dialog'):
+                                dev.evaluate(f"document.getElementById('{dialog_id}').showModal()")
+                                dark_surfaces(dialog_id)
+                                fits((space, lang, width, dialog_id))
+                                if width == 390:
+                                    screenshot(f'dark-{space}-{lang}-{dialog_id}')
+                                dev.evaluate(f"document.getElementById('{dialog_id}').close()")
+                        print(f'PASS dark {space} {lang} {width}x{height}: pages, surfaces, dialogs, chart')
+            # Both workspace light palettes remain intact after toggling back.
+            click('#theme-toggle')
+            for space, expected in (('personal', 'rgb(245, 243, 237)'), ('work', 'rgb(242, 244, 246)')):
+                dev.evaluate(f"workspace = '{space}'; applyWorkspace()")
+                assert dev.evaluate('getComputedStyle(document.body).backgroundColor') == expected
+            assert dev.evaluate('window.uiErrors') == [], dev.evaluate('window.uiErrors')
+            runpy.run_path(str(ROOT / 'tests/settings-browser-checks.py'))['check_settings'](
+                dev, evaluate_async, click, fits, screenshot, wait_for, app, VIEWPORTS)
+            runpy.run_path(str(ROOT / 'tests/overdue-browser-checks.py'))['check_overdue'](
+                dev, evaluate_async, click, fits, screenshot, wait_for, app, VIEWPORTS)
+            runpy.run_path(str(ROOT / 'tests/calendar-routine-browser-checks.py'))['check_calendar_routines'](
+                dev, evaluate_async, click, fits, screenshot, wait_for, app, VIEWPORTS)
+            runpy.run_path(str(ROOT / 'tests/cancellation-browser-checks.py'))['check_cancellation'](
+                dev, evaluate_async, click, fits, screenshot, wait_for, app, VIEWPORTS)
+            runpy.run_path(str(ROOT / 'tests/completion-order-browser-checks.py'))['check_completion_order'](
+                dev, evaluate_async, click, fits, screenshot, wait_for, app, VIEWPORTS)
+            dev.evaluate("workspace = 'personal'; applyWorkspace()")
+            evaluate_async("setView('routines')")
+            request('/api/routines', {'title': 'Second ordering routine', 'start_date': '2030-01-01', 'frequency': 'daily'})
+            evaluate_async('loadRoutines()')
+            before = dev.evaluate('routines.map(r => r.id)')
+            after = [before[1], before[0], *before[2:]]
+            click('.routine-card:first-child [data-routine-down]')
+            wait_for(lambda: dev.evaluate('routines.map(r => r.id)') == after)
+            evaluate_async('loadRoutines()')
+            assert dev.evaluate('routines.map(r => r.id)') == after
+            assert dev.evaluate("document.querySelector('.routine-card:first-child [data-routine-up]').disabled")
+            click('.routine-card:nth-child(2) [data-routine-up]')
+            wait_for(lambda: dev.evaluate('routines.map(r => r.id)') == before)
+            fits(('routine reordering', 320))
+            print('PASS routine reorder: up, down, disabled boundaries, persisted reload')
+            runpy.run_path(str(ROOT / 'tests/routine-drag-browser-checks.py'))['check_routine_drag'](
+                dev, evaluate_async, click, fits, wait_for)
             socket.close()
             print("PASS: ordering, keyboard, error visibility, list persistence, work header; isolated DB only")
         finally:

@@ -13,16 +13,87 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from accounts import Accounts, CURRENT_USER, protected, security_headers
+from local_backup import Backups
 
 
 ROOT = Path(__file__).resolve().parent
-DB_PATH = ROOT / "tasks.db"
+DATA_DIR = Path(os.environ['TASKLINE_DATA_DIR']) if os.environ.get('TASKLINE_DATA_DIR') else None
+DB_PATH = Path(os.environ.get('TASKLINE_DB', (DATA_DIR or ROOT) / "tasks.db"))
 STATIC_DIR = ROOT / "static"
-UPLOAD_DIR = ROOT / "uploads"
+UPLOAD_DIR = (DATA_DIR or ROOT) / "uploads"
 WORKSPACE_DAY_START_HOURS = {"personal": 3, "work": 0}
+SETTINGS_CATALOG = json.loads((STATIC_DIR / "settings-catalog.json").read_text())
+ACCOUNT_STORE = None
 
 
-def completion_day(completed_at: str | None, workspace: str, timezone_name: str) -> str:
+def initialize_accounts(owner_email=None, state_dir=None, backup_dir=None):
+    global ACCOUNT_STORE
+    state = Path(state_dir or os.environ.get('TASKLINE_STATE_DIR', (DATA_DIR or ROOT) / 'private-data'))
+    def initialize_tenant(user):
+        token = CURRENT_USER.set(user)
+        try:
+            initialize_database()
+        finally:
+            CURRENT_USER.reset(token)
+    ACCOUNT_STORE = Accounts(DB_PATH, state, owner_email or os.environ.get('TASKLINE_OWNER_EMAIL',''), initialize_tenant)
+    ACCOUNT_STORE.backups = Backups(DB_PATH, state, UPLOAD_DIR, backup_dir or os.environ.get('TASKLINE_BACKUP_DIR', DATA_DIR / 'backups' if DATA_DIR else ROOT.parent / 'Taskline-backups'))
+    return ACCOUNT_STORE
+
+
+def uploads_dir():
+    user = CURRENT_USER.get()
+    return ACCOUNT_STORE.user_paths(user)[1] if user and not user['is_owner'] else UPLOAD_DIR
+
+
+def default_settings() -> dict:
+    return {"features": {feature["id"]: True for feature in SETTINGS_CATALOG},
+            "dayStart": {"personal": 180, "work": 0},
+            "footer": ["settings", "inbox", "day", "routines", "lists"]}
+
+
+def read_settings(db) -> dict:
+    settings = default_settings()
+    row = db.execute("SELECT value FROM app_settings WHERE id = 1").fetchone()
+    if row:
+        stored = json.loads(row[0])
+        settings["features"].update(stored.get("features", {}))
+        settings["dayStart"].update(stored.get("dayStart", {}))
+        settings["footer"] = stored.get("footer", settings["footer"])
+    return settings
+
+
+def update_settings(db, patch) -> dict:
+    if not isinstance(patch, dict) or set(patch) - {"features", "dayStart", "footer"}:
+        raise ValueError("Invalid settings fields")
+    settings = read_settings(db)
+    for section in ("features", "dayStart"):
+        if section not in patch:
+            continue
+        values = patch[section]
+        if not isinstance(values, dict) or set(values) - set(settings[section]):
+            raise ValueError(f"Invalid {section} settings")
+        for key, value in values.items():
+            if section == "features" and type(value) is not bool:
+                raise ValueError("Feature settings must be true or false")
+            if section == "dayStart" and (type(value) is not int or not 0 <= value < 1440):
+                raise ValueError("Day start must be minutes from 00:00 to 23:59")
+            settings[section][key] = value
+    if "footer" in patch:
+        footer = patch["footer"]
+        allowed = {"settings", "inbox", "day", "routines", "lists", "dreams", "planned", "none"}
+        if (not isinstance(footer, list) or len(footer) != 5
+                or any(not isinstance(item, str) or item not in allowed for item in footer)
+                or footer[2] != "day" or footer.count("day") != 1
+                or len([item for item in footer if item != "none"]) != len(set(footer) - {"none"})):
+            raise ValueError("Today must stay in the center; other destinations must be unique")
+        settings["footer"] = footer
+    db.execute("INSERT INTO app_settings(id, value) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value",
+               (json.dumps(settings),))
+    return settings
+
+
+def completion_day(completed_at: str | None, workspace: str, timezone_name: str, day_start_minutes: int | None = None) -> str:
     if not completed_at:
         raise ValueError("Completion time is unavailable for this task")
     try:
@@ -33,18 +104,36 @@ def completion_day(completed_at: str | None, workspace: str, timezone_name: str)
     if completed.tzinfo is None:
         completed = completed.replace(tzinfo=timezone.utc)  # SQLite CURRENT_TIMESTAMP is UTC.
     local = completed.astimezone(local_zone)
-    return (local - timedelta(hours=WORKSPACE_DAY_START_HOURS[workspace])).date().isoformat()
+    minutes = WORKSPACE_DAY_START_HOURS[workspace] * 60 if day_start_minutes is None else day_start_minutes
+    return (local - timedelta(minutes=minutes)).date().isoformat()
+
+
+def completion_stamp_for_day(task_date: str, timezone_name: str, day_start_minutes: int) -> str:
+    """Date-only retrospective completion: anchor to that logical day's start.
+
+    There is no scheduled time-of-day in Taskline. This is a technical timestamp,
+    not a claim about the actual hour the user finished the task.
+    """
+    try:
+        zone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        raise ValueError("Invalid time zone") from None
+    local = datetime.fromisoformat(task_date) + timedelta(minutes=day_start_minutes)
+    return local.replace(tzinfo=zone).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def connect() -> sqlite3.Connection:
-    db = sqlite3.connect(DB_PATH)
+    user = CURRENT_USER.get()
+    path = ACCOUNT_STORE.user_paths(user)[0] if user else DB_PATH
+    db = sqlite3.connect(path, timeout=30)
     db.row_factory = sqlite3.Row
     return db
 
 
 def initialize_database() -> None:
-    UPLOAD_DIR.mkdir(exist_ok=True)
+    uploads_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
     with connect() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS app_settings (id INTEGER PRIMARY KEY CHECK(id = 1), value TEXT NOT NULL)")
         db.execute(
             """
             CREATE TABLE IF NOT EXISTS tasks (
@@ -59,6 +148,10 @@ def initialize_database() -> None:
         columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
         if "completed" not in columns:
             db.execute("ALTER TABLE tasks ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
+        if "cancelled" not in columns:
+            db.execute("ALTER TABLE tasks ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0")
+        if "routine_missed" not in columns:
+            db.execute("ALTER TABLE tasks ADD COLUMN routine_missed INTEGER NOT NULL DEFAULT 0")
         if "task_date" not in columns:
             db.execute("ALTER TABLE tasks ADD COLUMN task_date TEXT")
             db.execute("UPDATE tasks SET task_date = ? WHERE task_date IS NULL", (date.today().isoformat(),))
@@ -143,6 +236,8 @@ def initialize_database() -> None:
             db.execute("ALTER TABLE routines ADD COLUMN follow_until_complete INTEGER NOT NULL DEFAULT 0")
         if "workspace" not in routine_columns:
             db.execute("ALTER TABLE routines ADD COLUMN workspace TEXT NOT NULL DEFAULT 'personal'")
+        if "position" not in routine_columns:
+            db.execute("ALTER TABLE routines ADD COLUMN position INTEGER")
         db.execute(
             """CREATE TABLE IF NOT EXISTS routine_steps (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -250,14 +345,20 @@ def reconcile_task_stars(db: sqlite3.Connection, workspace: str, previous: dict)
 
 def sync_task_completion_from_children(db: sqlite3.Connection, task_id: int) -> None:
     child_counts = db.execute(
-        "SELECT COUNT(*), SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) FROM tasks WHERE parent_id = ?",
+        "SELECT COUNT(*), SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END), SUM(cancelled) FROM tasks WHERE parent_id = ?",
         (task_id,),
     ).fetchone()
     if child_counts[0] > 0:
         completed = int(child_counts[0] == child_counts[1])
+        # Preserve explicit parent cancellation (including mixed child outcomes)
+        # during startup normalization; reopening any child clears it.
         db.execute(
-            "UPDATE tasks SET completed = ?, completed_at = CASE WHEN ? = 1 THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE NULL END WHERE id = ?",
-            (completed, completed, task_id),
+            """UPDATE tasks SET completed = ?,
+                   cancelled = CASE WHEN ? = 0 OR (routine_missed = 1 AND ?) THEN 0 ELSE MAX(cancelled, ?) END,
+                   routine_missed = CASE WHEN ? THEN 0 ELSE routine_missed END,
+                   completed_at = CASE WHEN ? = 1 THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE NULL END WHERE id = ?""",
+            (completed, completed, int(completed and child_counts[2] == 0), int(child_counts[0] == child_counts[2]),
+             int(completed and child_counts[2] == 0), completed, task_id),
         )
 
 
@@ -419,13 +520,81 @@ def routine_dates(routine: sqlite3.Row, through: date) -> list[date]:
     return matches
 
 
-def materialize_routines(db: sqlite3.Connection, through: date, workspace: str | None = None) -> None:
+def request_timezone(query: dict) -> str:
+    try:
+        return ZoneInfo(query.get("timezone", ["Asia/Riyadh"])[0]).key
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        raise ValueError("Invalid time zone") from None
+
+
+def close_missed_routines(db: sqlite3.Connection, workspace: str | None = None,
+                          timezone_name: str = "Asia/Riyadh", now: datetime | None = None) -> None:
+    """Close expired occurrences, not successful completions or future schedules.
+
+    Reconciliation runs on reads as well as materialization, so offline days are
+    caught up when the app returns. It never uses the date being browsed as today.
+    """
+    now = now or datetime.now(timezone.utc)
+    if not db.in_transaction:
+        db.execute("BEGIN IMMEDIATE")
+    settings = read_settings(db)
+    for space in ([workspace] if workspace else ["personal", "work"]):
+        boundary = settings["dayStart"][space]
+        today = completion_day(now.isoformat(), space, timezone_name, boundary)
+        rows = db.execute(
+            """SELECT t.id, t.task_date FROM tasks t
+               LEFT JOIN tasks parent ON parent.id = t.parent_id AND parent.workspace = t.workspace
+               WHERE t.workspace = ? AND t.location = 'day' AND t.task_date < ?
+                 AND (t.routine_occurrence_id IS NOT NULL OR parent.routine_occurrence_id IS NOT NULL)
+                 AND (t.completed = 0 OR (t.cancelled = 1 AND t.routine_missed = 0))""",
+            (space, today),
+        ).fetchall()
+        if not rows:
+            continue
+        previous_stars = task_star_state(db, space)
+        for row in rows:
+            stamp = completion_stamp_for_day(row["task_date"], timezone_name, boundary)
+            db.execute(
+                """UPDATE tasks SET completed = 1, cancelled = 1, routine_missed = 1,
+                          completed_at = COALESCE(completed_at, ?) WHERE id = ?""", (stamp, row["id"]),
+            )
+        reconcile_task_stars(db, space, previous_stars)
+
+
+def order_future_routine_tasks(db: sqlite3.Connection, workspace: str, after_day: str,
+                               dates: set[str] | None = None) -> None:
+    """Reorder routine roots in their existing slots, leaving other tasks and steps alone."""
+    rows = db.execute(
+        """SELECT t.id, t.task_date, t.position, r.position AS routine_position,
+                  r.active, r.id AS routine_id
+           FROM tasks t JOIN routine_occurrences ro ON ro.id = t.routine_occurrence_id
+           JOIN routines r ON r.id = ro.routine_id
+           WHERE t.workspace = ? AND t.location = 'day' AND t.parent_id IS NULL
+             AND t.task_date > ? AND t.task_date = ro.scheduled_date AND r.archived = 0
+           ORDER BY t.task_date, t.position, t.id""", (workspace, after_day),
+    ).fetchall()
+    by_date: dict[str, list] = {}
+    for row in rows:
+        if dates is None or row['task_date'] in dates:
+            by_date.setdefault(row['task_date'], []).append(row)
+    for entries in by_date.values():
+        ordered = sorted(entries, key=lambda row: (
+            row['routine_position'] is None, row['routine_position'] or 0,
+            -row['active'], -row['routine_id']))
+        db.executemany('UPDATE tasks SET position = ? WHERE id = ?',
+                       [(slot['position'], entry['id']) for slot, entry in zip(entries, ordered)
+                        if slot['position'] != entry['position']])
+
+
+def materialize_routines(db: sqlite3.Connection, through: date, workspace: str | None = None,
+                        timezone_name: str = "Asia/Riyadh") -> None:
     if workspace is None:
-        routines = db.execute("SELECT * FROM routines WHERE active = 1 AND archived = 0").fetchall()
+        routines = db.execute("SELECT * FROM routines WHERE active = 1 AND archived = 0 ORDER BY position IS NULL, position, id DESC").fetchall()
     else:
         routines = db.execute(
-            "SELECT * FROM routines WHERE active = 1 AND archived = 0 AND workspace = ?", (workspace,)
+            "SELECT * FROM routines WHERE active = 1 AND archived = 0 AND workspace = ? ORDER BY position IS NULL, position, id DESC", (workspace,)
         ).fetchall()
+    created_dates: dict[str, set[str]] = {}
     for routine in routines:
         steps = db.execute(
             "SELECT title FROM routine_steps WHERE routine_id = ? ORDER BY position, id", (routine["id"],)
@@ -438,6 +607,7 @@ def materialize_routines(db: sqlite3.Connection, through: date, workspace: str |
             )
             if cursor.rowcount == 0:
                 continue
+            created_dates.setdefault(routine['workspace'], set()).add(scheduled_iso)
             occurrence_id = cursor.lastrowid
             position = db.execute(
                 "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE location = 'day' AND task_date = ? AND workspace = ?",
@@ -454,6 +624,15 @@ def materialize_routines(db: sqlite3.Connection, through: date, workspace: str |
                     "INSERT INTO tasks (title, position, task_date, location, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, follow_until_complete, workspace) VALUES (?, ?, ?, 'day', ?, 'date', ?, ?, ?, ?, ?)",
                     (step[0], position + offset, scheduled_iso, root_task_id, scheduled_iso, occurrence_id, scheduled_iso, routine["follow_until_complete"], routine["workspace"]),
                 )
+
+
+    if created_dates:
+        settings = read_settings(db)
+        now = datetime.now(timezone.utc).isoformat()
+        for space, dates in created_dates.items():
+            today = completion_day(now, space, timezone_name, settings['dayStart'][space])
+            order_future_routine_tasks(db, space, today, dates)
+    close_missed_routines(db, workspace, timezone_name)
 
 
 def remove_pending_routine_occurrences(db: sqlite3.Connection, routine_id: int, from_date: date) -> None:
@@ -490,6 +669,13 @@ def checklist_payload(db: sqlite3.Connection, checklist: sqlite3.Row) -> dict:
 
 
 class TodoHandler(BaseHTTPRequestHandler):
+    def account_store(self):
+        return ACCOUNT_STORE or initialize_accounts()
+
+    def end_headers(self):
+        security_headers(self)
+        super().end_headers()
+
     def send_json(self, payload: object, status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -504,18 +690,25 @@ class TodoHandler(BaseHTTPRequestHandler):
             raise ValueError("Request is too large")
         return json.loads(self.rfile.read(length) or b"{}")
 
+    @protected
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+        if path == "/api/settings":
+            with connect() as db:
+                self.send_json({"settings": read_settings(db), "catalog": SETTINGS_CATALOG})
+            return
         try:
             workspace = valid_workspace(query.get("workspace", ["personal"])[0])
+            timezone_name = request_timezone(query)
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
             return
         if path.startswith("/uploads/"):
-            file_path = (UPLOAD_DIR / path.removeprefix("/uploads/")).resolve()
-            if UPLOAD_DIR not in file_path.parents or not file_path.is_file():
+            directory = uploads_dir().resolve()
+            file_path = (directory / path.removeprefix("/uploads/")).resolve()
+            if directory not in file_path.parents or not file_path.is_file():
                 self.send_error(404)
                 return
             data = file_path.read_bytes()
@@ -535,9 +728,9 @@ class TodoHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/routines":
             with connect() as db:
-                materialize_routines(db, date.today(), workspace)
+                materialize_routines(db, date.today(), workspace, timezone_name)
                 routines = [routine_payload(db, row) for row in db.execute(
-                    "SELECT * FROM routines WHERE archived = 0 AND workspace = ? ORDER BY active DESC, id DESC",
+                    "SELECT * FROM routines WHERE archived = 0 AND workspace = ? ORDER BY position IS NULL, position, active DESC, id DESC",
                     (workspace,),
                 ).fetchall()]
             self.send_json(routines)
@@ -552,9 +745,9 @@ class TodoHandler(BaseHTTPRequestHandler):
                 end = date.today()
                 start = end - timedelta(days=days - 1)
                 with connect() as db:
-                    materialize_routines(db, end, workspace)
+                    materialize_routines(db, end, workspace, timezone_name)
                     sql = """SELECT ro.scheduled_date, COUNT(*) AS scheduled,
-                                    SUM(CASE WHEN t.completed = 1 THEN 1 ELSE 0 END) AS completed
+                                    SUM(CASE WHEN t.completed = 1 AND t.cancelled = 0 THEN 1 ELSE 0 END) AS completed
                              FROM routine_occurrences ro
                              JOIN tasks t ON t.id = ro.task_id
                              WHERE ro.scheduled_date BETWEEN ? AND ? AND t.workspace = ?"""
@@ -632,13 +825,13 @@ class TodoHandler(BaseHTTPRequestHandler):
                 next_start = date(current.year + (current.month == 12), current.month % 12 + 1, 1)
                 end = next_start - timedelta(days=1)
             with connect() as db:
-                materialize_routines(db, end, workspace)
+                materialize_routines(db, end, workspace, timezone_name)
                 rows = [dict(row) for row in db.execute(
-                    "SELECT id, title, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value FROM tasks WHERE workspace = ? AND location = 'day' AND task_date BETWEEN ? AND ? ORDER BY task_date, position, id",
+                    "SELECT id, title, completed, cancelled, routine_missed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value FROM tasks WHERE workspace = ? AND location = 'day' AND task_date BETWEEN ? AND ? ORDER BY task_date, position, id",
                     (workspace, start.isoformat(), end.isoformat()),
                 ).fetchall()]
                 inbox_rows = [dict(row) for row in db.execute(
-                    "SELECT id, title, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value FROM tasks WHERE workspace = ? AND location = 'inbox' AND planning_kind != 'none' ORDER BY position, id",
+                    "SELECT id, title, completed, cancelled, routine_missed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value FROM tasks WHERE workspace = ? AND location = 'inbox' AND planning_kind != 'none' ORDER BY position, id",
                     (workspace,),
                 ).fetchall()]
             month_numbers = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,"Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
@@ -676,14 +869,21 @@ class TodoHandler(BaseHTTPRequestHandler):
         if path == "/api/task-days":
             with connect() as db:
                 through = valid_date(query.get("through", [(date.today() + timedelta(days=14)).isoformat()])[0])
-                materialize_routines(db, date.fromisoformat(through), workspace)
+                materialize_routines(db, date.fromisoformat(through), workspace, timezone_name)
                 rows = db.execute(
-                    """SELECT task_date, COUNT(*) AS task_count,
-                              SUM(CASE WHEN completed = 0 THEN 1 ELSE 0 END) AS incomplete_count
-                       FROM tasks
-                       WHERE workspace = ? AND location = 'day'
-                       GROUP BY task_date
-                       ORDER BY task_date""",
+                    """SELECT t.task_date, COUNT(*) AS task_count,
+                              SUM(CASE WHEN t.routine_occurrence_id IS NULL AND parent.routine_occurrence_id IS NULL
+                                       THEN 1 ELSE 0 END) AS ordinary_task_count,
+                              SUM(t.routine_missed) AS missed_count,
+                              SUM(CASE WHEN t.completed = 0 THEN 1 ELSE 0 END) AS incomplete_count,
+                              SUM(CASE WHEN t.completed = 0 AND t.routine_occurrence_id IS NULL
+                                            AND parent.routine_occurrence_id IS NULL
+                                       THEN 1 ELSE 0 END) AS ordinary_incomplete_count
+                       FROM tasks t
+                       LEFT JOIN tasks parent ON parent.id = t.parent_id AND parent.workspace = t.workspace
+                       WHERE t.workspace = ? AND t.location = 'day'
+                       GROUP BY t.task_date
+                       ORDER BY t.task_date""",
                     (workspace,),
                 ).fetchall()
             self.send_json([dict(row) for row in rows])
@@ -691,9 +891,9 @@ class TodoHandler(BaseHTTPRequestHandler):
         if path == "/api/tasks/overdue":
             before = valid_date(query.get("before", [date.today().isoformat()])[0])
             with connect() as db:
-                materialize_routines(db, date.fromisoformat(before) - timedelta(days=1), workspace)
+                materialize_routines(db, date.fromisoformat(before) - timedelta(days=1), workspace, timezone_name)
                 rows = db.execute(
-                    "SELECT id, title, position, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE workspace = ? AND location = 'day' AND task_date < ? AND completed = 0 AND overdue_ignored = 0 AND (routine_occurrence_id IS NULL OR follow_until_complete = 1) AND parent_id IS NULL ORDER BY task_date DESC, position, id",
+                    "SELECT id, title, position, completed, cancelled, routine_missed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE workspace = ? AND location = 'day' AND task_date < ? AND completed = 0 AND overdue_ignored = 0 AND (routine_occurrence_id IS NULL OR follow_until_complete = 1) AND parent_id IS NULL ORDER BY task_date DESC, position, id",
                     (workspace, before),
                 ).fetchall()
             self.send_json([dict(row) for row in rows])
@@ -707,13 +907,13 @@ class TodoHandler(BaseHTTPRequestHandler):
             with connect() as db:
                 if location == "inbox":
                     rows = db.execute(
-                        "SELECT id, title, position, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE workspace = ? AND location = 'inbox' ORDER BY position, id",
+                        "SELECT id, title, position, completed, cancelled, routine_missed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE workspace = ? AND location = 'inbox' ORDER BY position, id",
                         (workspace,),
                     ).fetchall()
                 else:
-                    materialize_routines(db, date.fromisoformat(task_date), workspace)
+                    materialize_routines(db, date.fromisoformat(task_date), workspace, timezone_name)
                     rows = db.execute(
-                        "SELECT id, title, position, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE workspace = ? AND location = 'day' AND task_date = ? ORDER BY position, id",
+                        "SELECT id, title, position, completed, cancelled, routine_missed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE workspace = ? AND location = 'day' AND task_date = ? ORDER BY position, id",
                         (workspace, task_date),
                     ).fetchall()
             self.send_json([dict(row) for row in rows])
@@ -732,11 +932,13 @@ class TodoHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    @protected
     def do_POST(self) -> None:
         parsed_url = urlparse(self.path)
         path = parsed_url.path
         try:
             workspace = valid_workspace(parse_qs(parsed_url.query).get("workspace", ["personal"])[0])
+            timezone_name = request_timezone(parse_qs(parsed_url.query))
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
             return
@@ -817,7 +1019,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                         "INSERT INTO routine_steps (routine_id, title, position) VALUES (?, ?, ?)",
                         [(routine_id, step, position) for position, step in enumerate(steps)],
                     )
-                    materialize_routines(db, date.today(), workspace)
+                    materialize_routines(db, date.today(), workspace, timezone_name)
                     row = db.execute("SELECT * FROM routines WHERE id = ?", (routine_id,)).fetchone()
                     result = routine_payload(db, row)
                 self.send_json(result, 201)
@@ -843,7 +1045,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                     root = family[0]
                     if not all(member["completed"] for member in family):
                         raise ValueError("Complete the task and all its subtasks before archiving")
-                    target_date = completion_day(root["completed_at"], workspace, payload.get("timezone", "Asia/Riyadh"))
+                    target_date = completion_day(root["completed_at"], workspace, payload.get("timezone", "Asia/Riyadh"), read_settings(db)["dayStart"][workspace])
                     if not all(member["location"] == "day" and member["task_date"] == target_date for member in family):
                         position = db.execute(
                             "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE workspace = ? AND location = 'day' AND task_date = ?",
@@ -863,7 +1065,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                 task_id = int(overdue_match.group(1))
                 payload = self.read_json()
                 action = payload.get("action")
-                if action not in {"today", "inbox", "ignore"}:
+                if action not in {"today", "inbox", "ignore", "complete"}:
                     raise ValueError("Invalid overdue action")
                 client_today = valid_date(payload.get("target_date", date.today().isoformat()))
                 with connect() as db:
@@ -880,7 +1082,22 @@ class TodoHandler(BaseHTTPRequestHandler):
                         "SELECT id, task_date FROM tasks WHERE workspace = ? AND (id = ? OR parent_id = ?) ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, position, id",
                         (workspace, root_id, root_id, root_id),
                     ).fetchall()
-                    if action == "ignore":
+                    if action == "complete":
+                        root = db.execute("SELECT task_date, location FROM tasks WHERE id = ? AND workspace = ?", (root_id, workspace)).fetchone()
+                        zone_name = payload.get("timezone", "Asia/Riyadh")
+                        boundary = read_settings(db)["dayStart"][workspace]
+                        actual_today = completion_day(datetime.now(timezone.utc).isoformat(), workspace, zone_name, boundary)
+                        if root["location"] != "day" or root["task_date"] >= actual_today:
+                            raise ValueError("Only a past daily task can be completed in its original day")
+                        if payload.get("original_date", root["task_date"]) != root["task_date"]:
+                            raise ValueError("Task date changed. Refresh the overdue list and try again")
+                        for member in family:
+                            stamp = completion_stamp_for_day(member["task_date"], zone_name, boundary)
+                            db.execute(
+                                "UPDATE tasks SET completed_at = CASE WHEN completed = 0 THEN ? ELSE completed_at END, completed = 1, cancelled = 0, routine_missed = 0 WHERE id = ? AND (completed = 0 OR routine_missed = 1)",
+                                (stamp, member["id"]),
+                            )
+                    elif action == "ignore":
                         db.execute("UPDATE tasks SET overdue_ignored = 1 WHERE id = ?", (root_id,))
                     else:
                         location = "day" if action == "today" else "inbox"
@@ -903,7 +1120,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                                     (next_position + offset, member[0]),
                                 )
                     reconcile_task_stars(db, workspace, previous_stars)
-                self.send_json({"ok": True, "action": action})
+                self.send_json({"ok": True, "action": action, **({"task_date": root["task_date"]} if action == "complete" else {})})
             except (ValueError, json.JSONDecodeError) as error:
                 self.send_json({"error": str(error)}, 400)
             return
@@ -1012,26 +1229,49 @@ class TodoHandler(BaseHTTPRequestHandler):
                         "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE workspace = ? AND location = ? AND (? = 'inbox' OR task_date = ?)",
                         (workspace, location, location, task_date),
                     ).fetchone()[0]
+                    if location == 'day':
+                        first_routine = db.execute(
+                            "SELECT MIN(position) FROM tasks WHERE workspace = ? AND location = 'day' AND task_date = ? AND parent_id IS NULL AND routine_occurrence_id IS NOT NULL",
+                            (workspace, task_date),
+                        ).fetchone()[0]
+                        if first_routine is not None:
+                            position = first_routine
+                            db.execute(
+                                "UPDATE tasks SET position = position + 1 WHERE workspace = ? AND location = 'day' AND task_date = ? AND position >= ?",
+                                (workspace, task_date, position),
+                            )
                 cursor = db.execute(
                     "INSERT INTO tasks (title, position, task_date, location, planning_kind, planning_value, parent_id, workspace) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (title, position, task_date, location, planning_kind, planning_value, parent_id, workspace),
                 )
                 if parent_id is not None:
-                    db.execute("UPDATE tasks SET completed = 0, completed_at = NULL WHERE id = ?", (parent_id,))
+                    db.execute("UPDATE tasks SET completed = 0, cancelled = 0, completed_at = NULL WHERE id = ?", (parent_id,))
                 reconcile_task_stars(db, workspace, previous_stars)
                 row = db.execute(
-                    "SELECT id, title, position, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE id = ?",
+                    "SELECT id, title, position, completed, cancelled, routine_missed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE id = ?",
                     (cursor.lastrowid,),
                 ).fetchone()
             self.send_json(dict(row), 201)
         except (ValueError, json.JSONDecodeError) as error:
             self.send_json({"error": str(error)}, 400)
 
+    @protected
     def do_PUT(self) -> None:
         parsed_url = urlparse(self.path)
         path = parsed_url.path
+        if path == "/api/settings":
+            try:
+                patch = self.read_json()
+                with connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    settings = update_settings(db, patch)
+                self.send_json({"settings": settings, "catalog": SETTINGS_CATALOG})
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
+            return
         try:
             workspace = valid_workspace(parse_qs(parsed_url.query).get("workspace", ["personal"])[0])
+            timezone_name = request_timezone(parse_qs(parsed_url.query))
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
             return
@@ -1090,6 +1330,24 @@ class TodoHandler(BaseHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError) as error:
                 self.send_json({"error": str(error)}, 400)
             return
+        if path == "/api/routines/reorder":
+            try:
+                ids = self.read_json().get("ids")
+                if not isinstance(ids, list) or any(type(value) is not int for value in ids) or len(ids) != len(set(ids)):
+                    raise ValueError("Invalid routine order")
+                with connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    existing = {row[0] for row in db.execute("SELECT id FROM routines WHERE workspace = ? AND archived = 0", (workspace,))}
+                    if set(ids) != existing:
+                        raise ValueError("Routine list changed; reload and try again")
+                    db.executemany("UPDATE routines SET position = ? WHERE id = ? AND workspace = ?", ((index, routine_id, workspace) for index, routine_id in enumerate(ids)))
+                    boundary = read_settings(db)['dayStart'][workspace]
+                    today = completion_day(datetime.now(timezone.utc).isoformat(), workspace, timezone_name, boundary)
+                    order_future_routine_tasks(db, workspace, today)
+                self.send_json({"ok": True})
+            except (ValueError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
+            return
         routine_match = re.fullmatch(r"/api/routines/(\d+)", path)
         if routine_match:
             try:
@@ -1100,7 +1358,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                     if existing is None:
                         self.send_json({"error": "Routine not found"}, 404)
                         return
-                    materialize_routines(db, date.today() - timedelta(days=1), workspace)
+                    materialize_routines(db, date.today() - timedelta(days=1), workspace, timezone_name)
                     schedule_keys = {
                         "title", "start_date", "frequency", "interval_value", "weekdays", "month_day",
                         "year_month", "year_day", "end_mode", "end_value", "follow_until_complete", "steps",
@@ -1143,7 +1401,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                         db.execute("UPDATE routines SET active = ? WHERE id = ?", (active, routine_id))
                     row = db.execute("SELECT * FROM routines WHERE id = ?", (routine_id,)).fetchone()
                     if row["active"]:
-                        materialize_routines(db, date.today(), workspace)
+                        materialize_routines(db, date.today(), workspace, timezone_name)
                     result = routine_payload(db, row)
                 self.send_json(result)
             except (ValueError, TypeError, json.JSONDecodeError) as error:
@@ -1178,7 +1436,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                         raise ValueError("Image is too large")
                     extension = "jpg" if match.group(1) == "jpeg" else match.group(1)
                     filename = f"dream-{dream_id}-{uuid.uuid4().hex}.{extension}"
-                    (UPLOAD_DIR / filename).write_bytes(image_bytes)
+                    (uploads_dir() / filename).write_bytes(image_bytes)
                     updates.append("image_path = ?")
                     values.append(f"/uploads/{filename}")
                 if not updates:
@@ -1217,6 +1475,15 @@ class TodoHandler(BaseHTTPRequestHandler):
             try:
                 task_id = int(path.rsplit("/", 1)[-1])
                 payload = self.read_json()
+                if "cancelled" in payload:
+                    if not isinstance(payload["cancelled"], bool):
+                        raise ValueError("Invalid cancellation status")
+                    if payload["cancelled"]:
+                        if "completed" in payload and payload["completed"] is not True:
+                            raise ValueError("Cancelled tasks must be completed")
+                        payload["completed"] = True
+                    elif "completed" not in payload:
+                        raise ValueError("Include completion status when clearing cancellation")
                 updates = []
                 values = []
                 canonical_label_color = None
@@ -1227,6 +1494,10 @@ class TodoHandler(BaseHTTPRequestHandler):
                     values.append(int(payload["completed"]))
                     updates.append("completed_at = CASE WHEN ? = 1 THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE NULL END")
                     values.append(int(payload["completed"]))
+                    updates.append("cancelled = ?")
+                    values.append(int(payload.get("cancelled", False)))
+                    if payload["completed"] and not payload.get("cancelled", False):
+                        updates.append("routine_missed = 0")
                 if "title" in payload:
                     title = str(payload["title"]).strip()
                     if not title or len(title) > 280:
@@ -1317,8 +1588,8 @@ class TodoHandler(BaseHTTPRequestHandler):
                         children = db.execute("SELECT id FROM tasks WHERE parent_id = ?", (task_id,)).fetchall()
                         if children:
                             db.executemany(
-                                "UPDATE tasks SET completed = ?, completed_at = CASE WHEN ? = 1 THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE NULL END WHERE id = ?",
-                                [(int(payload["completed"]), int(payload["completed"]), child[0]) for child in children],
+                                "UPDATE tasks SET routine_missed = CASE WHEN ? THEN 0 ELSE routine_missed END, cancelled = CASE WHEN ? = 1 AND completed = 1 THEN cancelled ELSE ? END, completed = ?, completed_at = CASE WHEN ? = 1 THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE NULL END WHERE id = ?",
+                                [(int(payload["completed"] and not payload.get("cancelled", False)), int(payload.get("cancelled", False)), int(payload.get("cancelled", False)), int(payload["completed"]), int(payload["completed"]), child[0]) for child in children],
                             )
                         sync_ancestor_completion(db, task_id)
                     family_updates = []
@@ -1353,7 +1624,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                             raise ValueError("Only one task of the day is allowed in this list")
                     reconcile_task_stars(db, workspace, previous_stars)
                     row = db.execute(
-                        "SELECT id, title, position, completed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE id = ?",
+                        "SELECT id, title, position, completed, cancelled, routine_missed, task_date, location, label, label_color, starred, parent_id, planning_kind, planning_value, routine_occurrence_id, routine_scheduled_date, overdue_ignored, completed_at, follow_until_complete, carried_from_date, workspace, created_at FROM tasks WHERE id = ?",
                         (task_id,),
                     ).fetchone()
                 self.send_json(dict(row))
@@ -1388,11 +1659,13 @@ class TodoHandler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError) as error:
             self.send_json({"error": str(error)}, 400)
 
+    @protected
     def do_DELETE(self) -> None:
         parsed_url = urlparse(self.path)
         path = parsed_url.path
         try:
             workspace = valid_workspace(parse_qs(parsed_url.query).get("workspace", ["personal"])[0])
+            timezone_name = request_timezone(parse_qs(parsed_url.query))
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
             return
@@ -1437,7 +1710,7 @@ class TodoHandler(BaseHTTPRequestHandler):
                 if existing is None:
                     self.send_json({"error": "Routine not found"}, 404)
                     return
-                materialize_routines(db, date.today() - timedelta(days=1), workspace)
+                materialize_routines(db, date.today() - timedelta(days=1), workspace, timezone_name)
                 remove_pending_routine_occurrences(db, routine_id, date.today())
                 db.execute("UPDATE routines SET active = 0, archived = 1 WHERE id = ?", (routine_id,))
             self.send_json({"ok": True})
@@ -1487,7 +1760,17 @@ class TodoHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    os.umask(0o077)
+    if os.environ.get('RENDER') == 'true':
+        if not DATA_DIR or not DATA_DIR.is_absolute() or not os.path.ismount(DATA_DIR):
+            raise RuntimeError('TASKLINE_DATA_DIR must be an attached persistent disk mount on Render')
+        root = DATA_DIR.resolve()
+        persistent_paths = [DB_PATH, UPLOAD_DIR, Path(os.environ.get('TASKLINE_STATE_DIR', root / 'private-data')), Path(os.environ.get('TASKLINE_BACKUP_DIR', root / 'backups'))]
+        if any(root not in path.resolve().parents for path in persistent_paths):
+            raise RuntimeError('Database, uploads, state, and backups must be inside TASKLINE_DATA_DIR on Render')
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     initialize_database()
+    initialize_accounts()
     host = os.environ.get("TASKLINE_HOST", "0.0.0.0")
     port = int(os.environ.get("TASKLINE_PORT", "8000"))
     server = ThreadingHTTPServer((host, port), TodoHandler)

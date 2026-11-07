@@ -1,4 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Instrument+Serif&display=swap');
+.auth-pending .app-header, .auth-pending .shell, .auth-pending .bottom-nav { visibility: hidden; }
+#auth-loading { padding: 24px; text-align: center; }
+html:not(.auth-pending) #auth-loading { display: none; }
 :root{--ink:#19251f;--muted:#718078;--paper:#f5f3ed;--card:#fffefb;--line:#dcddd6;--green:#28553f;--soft:#e4ece6;--accent:#ee7049;font-family:"DM Sans",system-ui,sans-serif;color:var(--ink);background:var(--paper)}
 *{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100vh;background:var(--paper)}body.work-workspace{--ink:#172330;--muted:#6d7b88;--paper:#f2f4f6;--card:#fff;--line:#d8dde2;--green:#355b7d;--soft:#e4ebf1;--accent:#d47a3f}button,input,select,textarea{font:inherit}
 .app-header{position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;height:60px;padding:0 max(20px,calc((100vw - 760px)/2));border-bottom:1px solid var(--line);background:rgba(245,243,237,.94);backdrop-filter:blur(14px)}
@@ -123,6 +125,10 @@ html{scrollbar-gutter:stable}body{-webkit-font-smoothing:antialiased;text-render
   border-top: 1px solid var(--line);
 }
 .task .task-tools > span { display: contents; }
+/* Keep the two primary actions first, then Edit / Cancel / Delete on one row. */
+@media (min-width: 601px) {
+  .task .task-tools :is([data-add-subtask], [data-day-star], [data-edit], .task-disposition) { grid-column: span 2; }
+}
 .task .task-tools button {
   display: flex;
   align-items: center;
@@ -142,6 +148,17 @@ html{scrollbar-gutter:stable}body{-webkit-font-smoothing:antialiased;text-render
   cursor: pointer;
 }
 .task-tools .action-caption { font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.task-disposition { display: block; min-width: 0; container-type: inline-size; }
+.task-disposition-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; height: 100%; }
+.task .task-disposition button { justify-content: center; gap: 4px; padding-inline: 4px; }
+.task .task-tools [data-cancel-task]:not(.complete-action) { color: #9b4a37; background: #f7e5df; }
+.task.completed.cancelled .check-button { color: #9b4a37; background: #f7e5df; border-color: #bb6d59; font-size: 14px; }
+@container (max-width: 150px) {
+  .task-disposition-buttons .action-caption { display: none; }
+}
+@media (max-width: 600px) {
+  .task-disposition-buttons .action-caption { display: none; }
+}
 .task-tools button:disabled { opacity: .35; }
 .task-tools [data-delete] { color: #9b4a37 !important; background: #f7e5df !important; }
 .task .task-tools button:hover:not(:disabled) { filter: brightness(.96); }
@@ -159,6 +176,12 @@ html{scrollbar-gutter:stable}body{-webkit-font-smoothing:antialiased;text-render
 .routine-form > *, .routine-form input, .routine-form select, .routine-schedule,
 .routine-stats-controls > *, .input-row > input { min-width: 0; }
 .routine-card { grid-template-columns: minmax(0, 1fr) auto; }
+.routine-card-actions button:disabled { opacity: .35; cursor: default; }
+.routine-card-actions [data-routine-drag] { touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+.routine-card-actions [data-routine-drag] .grip { margin: 0; pointer-events: none; }
+.routine-card.routine-dragging { opacity: .65; outline: 2px solid var(--green); }
+.routine-card.routine-dragging [data-routine-drag] { cursor: grabbing; }
+.routine-card-actions [data-routine-up], .routine-card-actions [data-routine-down] { font-size: 20px; font-weight: 700; }
 .routine-card h3, .dream-card h3 { overflow-wrap: anywhere; }
 .history-group, .history-group p { min-width: 0; overflow-wrap: anywhere; }
 .lists-hero, .routine-hero { justify-content: flex-end; padding: 0; border: 0; background: transparent; }
@@ -187,4 +210,16 @@ html{scrollbar-gutter:stable}body{-webkit-font-smoothing:antialiased;text-render
   .brand strong { font-size: 12px; }
   .header-actions { gap: 3px; }
   .workspace-indicator { display: none; }
+}
+
+/* Overdue tasks have two distinct outcomes: complete there, or move to today. */
+.overdue-list .overdue-actions button { min-height: 44px; }
+.overdue-list .overdue-complete { color: var(--green); background: var(--soft); border-color: var(--line); }
+.overdue-actions button:disabled { opacity: .5; }
+@media (max-width: 600px) {
+  .overdue-list li { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .overdue-actions { width: 100%; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px 44px; }
+  .overdue-actions.routine-overdue, .without-inbox .overdue-actions { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
+  .overdue-actions .overdue-icon { width: 44px; min-width: 44px; }
+  .overdue-actions .overdue-primary, .overdue-actions .overdue-complete { white-space: normal; min-width: 0; padding-inline: 6px; }
 }

@@ -6,12 +6,14 @@ A responsive personal planning app built with Python's standard library. It incl
 
 1. Install Python 3.10 or newer from https://www.python.org/downloads/
 2. Open a terminal in this folder.
-3. Run `python app.py`.
+3. Set `TASKLINE_OWNER_EMAIL` to the primary owner's email, then run `python app.py`.
 4. Open http://localhost:8000 on your PC.
 
 To use it from a phone or tablet on the same Wi-Fi network, open `http://YOUR-PC-IP:8000` on that device. Windows may ask you to allow Python through the firewall the first time.
 
 Tasks are saved in `tasks.db`, which is created automatically beside `app.py`.
+
+Accounts, activation, local backups and restore instructions are in [LOCAL_ACCOUNTS.md](LOCAL_ACCOUNTS.md). The primary owner's existing database remains in place. New accounts use separate local SQLite files. Use the HTTPS address below for phone access; secure session cookies are not supported over plain HTTP LAN addresses.
 
 ## Install on a phone
 

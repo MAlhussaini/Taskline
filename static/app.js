@@ -92,9 +92,10 @@ const installDialogTitle = document.querySelector('#install-dialog-title');
 const installDialogMessage = document.querySelector('#install-dialog-message');
 
 let tasks = [];
+const completingTasks = new Set();
 let draggedId = null;
 let swipeStart = null;
-let activeDays = new Set();
+let calendarDays = new Map();
 let completedDays = new Set();
 let currentView = 'day';
 let labelingTask = null;
@@ -102,10 +103,10 @@ let editingTask = null;
 let currentDream = null;
 let inboxSubView = 'inbox';
 let activeLabel = '';
-let language = localStorage.getItem('taskline-language') || 'en';
-let workspace = localStorage.getItem('taskline-workspace') === 'work' ? 'work' : 'personal';
-// These defaults are centralized so they can move into the Settings screen later.
-const workspaceDayStartHours = { personal: 3, work: 0 };
+let language = TasklineStorage.getItem('taskline-language') || 'en';
+let workspace = TasklineStorage.getItem('taskline-workspace') === 'work' ? 'work' : 'personal';
+const featureEnabled = id => TasklineSettings.enabled(id);
+const orderingOptions = () => ({ prioritySort: featureEnabled('prioritySort'), taskOfDay: featureEnabled('taskOfDay'), completedLast: featureEnabled('completedLast') });
 let dreams = [];
 let routines = [];
 let checklists = [];
@@ -125,6 +126,12 @@ const routineCopy = {
 };
 routineCopy.en.missed = 'Missed';
 routineCopy.ar.missed = 'فائتة';
+routineCopy.en.followHelp = 'Missed occurrences close automatically with ❌, even with follow-up enabled. Correct completion in their original day.';
+routineCopy.ar.followHelp = 'المواعيد الفائتة تُغلق تلقائيًا بعلامة ❌ حتى مع تفعيل المتابعة. يمكن تصحيح إنجازها من يومها الأصلي.';
+routineCopy.en.completeOriginal = 'Complete in original day';
+routineCopy.ar.completeOriginal = 'إكمال في موعدها';
+routineCopy.en.complete = 'Complete';
+routineCopy.ar.complete = 'إكمال';
 const rt = key => routineCopy[language][key];
 const listCopy = {
   en: { lists:'Lists', intro:'Keep groceries and any reusable checklist in one place.', name:'List name', namePlaceholder:'Groceries', create:'Create list', editLists:'Edit', doneEditing:'Done', noLists:'No lists yet. Create one above.', empty:'No items yet.', itemPlaceholder:'Add an item…', addItem:'Add', rename:'Rename list', editItem:'Edit item', expand:'Expand list', collapse:'Collapse list', moveUp:'Move list up', moveDown:'Move list down', remove:'Delete list', removeItem:'Delete item', completed:'completed', renamePrompt:'New list name', itemPrompt:'Edit item', confirmRemove:'Delete this list and all its items?' },
@@ -137,10 +144,14 @@ const pwaCopy = {
 };
 const pt = key => pwaCopy[language][key];
 const calendarCopy = {
-  en: { open:'Open full month', kicker:'Full month', previous:'Previous month', next:'Next month', choose:'Choose a day', legend:'Day status legend', incomplete:'Needs attention', complete:'All complete', noTasks:'No tasks', close:'Close', today:'Today' },
-  ar: { open:'فتح الشهر كاملًا', kicker:'الشهر كاملًا', previous:'الشهر السابق', next:'الشهر التالي', choose:'اختر يومًا', legend:'دليل حالة الأيام', incomplete:'يحتاج إلى إنجاز', complete:'مكتمل بالكامل', noTasks:'لا توجد مهام', close:'إغلاق', today:'اليوم' },
+  en: { open:'Open full month', kicker:'Full month', previous:'Previous month', next:'Next month', choose:'Choose a day', legend:'Day status legend', incomplete:'Needs attention', complete:'All complete', routine:'Pending routines; red reminders appear only today', noTasks:'No tasks', close:'Close', today:'Today' },
+  ar: { open:'فتح الشهر كاملًا', kicker:'الشهر كاملًا', previous:'الشهر السابق', next:'الشهر التالي', choose:'اختر يومًا', legend:'دليل حالة الأيام', incomplete:'يحتاج إلى إنجاز', complete:'مكتمل بالكامل', routine:'روتين غير مكتمل؛ التنبيه الأحمر يظهر في اليوم الحالي فقط', noTasks:'لا توجد مهام', close:'إغلاق', today:'اليوم' },
 };
 const ct = key => calendarCopy[language][key];
+calendarCopy.en.missed = 'Missed routines; not marked as successfully completed';
+calendarCopy.ar.missed = 'روتين فائت؛ لم يُسجّل كإنجاز ناجح';
+calendarCopy.en.ordinaryComplete = 'All non-routine tasks complete';
+calendarCopy.ar.ordinaryComplete = 'جميع المهام غير الروتينية مكتملة';
 
 function isIosDevice() {
   return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -204,6 +215,7 @@ function applyWorkspace() {
   brandTitle.textContent = isWork ? (arabic ? 'Taskline عمل' : 'Taskline Work') : 'Taskline';
   document.title = isWork ? `Taskline — ${arabic ? 'العمل' : 'Work'}` : 'Taskline';
   document.body.classList.toggle('work-workspace', isWork);
+  TasklineTheme.setWorkspace(workspace);
 }
 
 function applyLanguage() {
@@ -249,7 +261,9 @@ function applyLanguage() {
   navRoutines.lastChild.textContent = rt('routines');
   navLists.lastChild.textContent = lt('lists');
   document.querySelector('#nav-settings').lastChild.textContent = t('settings');
-  document.querySelector('#nav-settings').title = arabic ? 'ستتوفر الإعدادات لاحقًا' : 'Settings will be available later';
+  document.querySelector('#nav-settings').title = t('settings');
+  document.querySelector('#settings-section').setAttribute('aria-label', t('settings'));
+  document.querySelector('#simple-date-label span').textContent = t('date');
   document.querySelector('#tasks-heading').textContent = t('list');
   document.querySelector('#overdue-heading').textContent = t('overdue');
   todayButton.textContent = t('today');
@@ -333,6 +347,8 @@ function applyLanguage() {
   if (currentView === 'lists') renderLists();
   if (inboxSubView === 'dreams') loadDreams();
   if (inboxSubView === 'history') loadHistory();
+  TasklineSettings.renderFooter();
+  if (currentView === 'settings') TasklineSettings.render();
 }
 let today = effectiveToday();
 let currentDate = today;
@@ -376,9 +392,12 @@ function renderMonthCalendar() {
   const keyboardDate = visibleDates.includes(currentDate) ? currentDate : calendarCursor;
   visibleDates.forEach(iso => {
     const value = fromISO(iso);
-    const hasTasks = activeDays.has(iso);
-    const allComplete = completedDays.has(iso);
-    const statusText = hasTasks ? ct(allComplete ? 'complete' : 'incomplete') : ct('noTasks');
+    const status = TasklineCalendar.dayStatus(calendarDays.get(iso), today);
+    const hasTasks = featureEnabled('calendarStatus') && ['incomplete', 'complete'].includes(status);
+    const allComplete = featureEnabled('calendarStatus') && completedDays.has(iso);
+    const summary = calendarDays.get(iso);
+    const statusText = ct(status === 'complete' && Number(summary?.ordinary_task_count) > 0
+      && (Number(summary.incomplete_count) > 0 || Number(summary.missed_count) > 0) ? 'ordinaryComplete' : status);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `month-day${iso.slice(0, 7) === cursorMonth ? '' : ' outside-month'}${iso === today ? ' today' : ''}${iso === currentDate ? ' selected' : ''}${hasTasks ? ' has-tasks' : ''}${allComplete ? ' all-complete' : ''}`;
@@ -387,7 +406,7 @@ function renderMonthCalendar() {
     button.setAttribute('aria-selected', String(iso === currentDate));
     button.tabIndex = iso === keyboardDate ? 0 : -1;
     if (iso === today) button.setAttribute('aria-current', 'date');
-    button.setAttribute('aria-label', `${new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(value)} — ${statusText}`);
+    button.setAttribute('aria-label', `${new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(value)}${featureEnabled('calendarStatus') ? ` — ${statusText}` : ''}`);
     button.innerHTML = `<span>${new Intl.DateTimeFormat(locale, { day: 'numeric' }).format(value)}</span><i aria-hidden="true"></i>`;
     fragment.appendChild(button);
   });
@@ -402,6 +421,7 @@ function setCalendarBusy(busy) {
 }
 
 async function openMonthCalendar() {
+  if (!featureEnabled('calendar')) return;
   calendarCursor = TasklineCalendar.monthStart(currentDate);
   renderMonthCalendar();
   monthPicker.setAttribute('aria-expanded', 'true');
@@ -439,7 +459,7 @@ async function focusMonthDate(iso) {
 
 function effectiveToday(now = new Date(), targetWorkspace = workspace) {
   const adjusted = new Date(now.getTime());
-  adjusted.setHours(adjusted.getHours() - workspaceDayStartHours[targetWorkspace]);
+  adjusted.setMinutes(adjusted.getMinutes() - TasklineSettings.values.dayStart[targetWorkspace]);
   return toISO(adjusted);
 }
 
@@ -459,12 +479,13 @@ function applyPlanningPreference() {
     const monthIndex = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(planningMonth.value);
     planningQuarter.value = String(Math.floor(monthIndex / 3) + 1);
   }
-  localStorage.setItem('taskline-plan-year', planningYear.value);
-  localStorage.setItem('taskline-plan-quarter', planningQuarter.value);
-  localStorage.setItem('taskline-plan-month', planningMonth.value);
+  TasklineStorage.setItem('taskline-plan-year', planningYear.value);
+  TasklineStorage.setItem('taskline-plan-quarter', planningQuarter.value);
+  TasklineStorage.setItem('taskline-plan-month', planningMonth.value);
 }
 
 function currentPlan() {
+  if (!featureEnabled('planning')) return { kind: 'none', value: null };
   if (!planningYear.value) return { kind: 'none', value: null };
   const base = planningYear.value;
   if (planningMonth.value) return { kind: 'month', value: `${base}-Q${planningQuarter.value}-${planningMonth.value}` };
@@ -481,6 +502,12 @@ function planFromWheels(year, quarter, month) {
 
 function renderCalendar() {
   const locale = language === 'ar' ? 'ar' : 'en';
+  document.querySelector('#simple-date').value = currentDate;
+  if (currentView === 'settings') {
+    dayTitle.textContent = t('settings');
+    document.querySelector('.intro').textContent = language === 'ar' ? 'اجعل Taskline مناسبًا لطريقتك.' : 'Make Taskline fit the way you work.';
+    return;
+  }
   if (currentView === 'lists') {
     dayTitle.textContent = lt('lists');
     document.querySelector('.intro').textContent = lt('intro');
@@ -509,9 +536,11 @@ function renderCalendar() {
   for (let offset = -3; offset <= 3; offset += 1) {
     const iso = shifted(currentDate, offset);
     const value = fromISO(iso);
+    const status = TasklineCalendar.dayStatus(calendarDays.get(iso), today);
+    const hasTasks = featureEnabled('calendarStatus') && ['incomplete', 'complete'].includes(status);
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = `day-chip${iso === currentDate ? ' selected' : ''}${activeDays.has(iso) ? ' has-tasks' : ''}${completedDays.has(iso) ? ' all-complete' : ''}`;
+    button.className = `day-chip${iso === currentDate ? ' selected' : ''}${hasTasks ? ' has-tasks' : ''}${featureEnabled('calendarStatus') && completedDays.has(iso) ? ' all-complete' : ''}`;
     button.dataset.date = iso;
     button.setAttribute('aria-label', new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(value));
     button.innerHTML = `<span>${new Intl.DateTimeFormat(locale, { weekday: 'narrow' }).format(value)}</span><strong>${value.getDate()}</strong><i></i>`;
@@ -522,7 +551,7 @@ function renderCalendar() {
 
 async function api(path, options = {}) {
   const separator = path.includes('?') ? '&' : '?';
-  const scopedPath = path.startsWith('/api/') ? `${path}${separator}workspace=${encodeURIComponent(workspace)}` : path;
+  const scopedPath = path.startsWith('/api/') ? `${path}${separator}workspace=${encodeURIComponent(workspace)}&timezone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}` : path;
   const response = await fetch(scopedPath, { headers: { 'Content-Type': 'application/json' }, ...options });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Something went wrong');
@@ -534,11 +563,11 @@ const grip = () => `<span class="grip" aria-label="${language === 'ar' ? 'اسح
 
 function taskDisplayGroup(task) {
   const root = tasks.find(entry => entry.id === task.parent_id) || task;
-  return TasklineOrder.group({ parent: root, children: tasks.filter(entry => entry.parent_id === root.id) });
+  return TasklineOrder.group({ parent: root, children: tasks.filter(entry => entry.parent_id === root.id) }, orderingOptions());
 }
 
 function orderTasksForDisplay(source) {
-  return TasklineOrder.order(source);
+  return TasklineOrder.order(source, orderingOptions());
 }
 
 function movePeers(task, source) {
@@ -549,6 +578,7 @@ function movePeers(task, source) {
 function render() {
   cancelStarPress();
   syncLocalToday();
+  if (!featureEnabled('labels')) activeLabel = '';
   list.innerHTML = '';
   const labels = [...new Set(tasks.map(task => task.label).filter(Boolean))].sort();
   labelFilter.hidden = currentView !== 'inbox' || labels.length === 0;
@@ -562,17 +592,17 @@ function render() {
   const visibleTasks = orderTasksForDisplay(filteredTasks);
   visibleTasks.forEach((task, index) => {
     const item = document.createElement('li');
-    item.className = `task${task.completed ? ' completed' : ''}${task.parent_id ? ' child-task' : ''}${task.routine_occurrence_id ? ' routine-task' : ''}`;
+    item.className = `task${task.completed ? ' completed' : ''}${task.completed && task.cancelled ? ' cancelled' : ''}${task.parent_id ? ' child-task' : ''}${task.routine_occurrence_id ? ' routine-task' : ''}`;
     item.dataset.id = task.id;
-    item.draggable = !activeLabel;
+    item.draggable = !activeLabel && featureEnabled('reordering');
     const peers = movePeers(task, visibleTasks);
     const peerIndex = peers.findIndex(entry => entry.id === task.id);
-    const label = task.label ? `<span class="task-label ${task.label_color || 'gray'}"><i></i>${escapeHtml(task.label)}</span>` : '';
-    const plan = task.location === 'inbox' && task.planning_kind !== 'none' ? `<span class="planning-badge">${escapeHtml(task.planning_value || task.planning_kind)}</span>` : '';
+    const label = featureEnabled('labels') && task.label ? `<span class="task-label ${task.label_color || 'gray'}"><i></i>${escapeHtml(task.label)}</span>` : '';
+    const plan = featureEnabled('planning') && task.location === 'inbox' && task.planning_kind !== 'none' ? `<span class="planning-badge">${escapeHtml(task.planning_value || task.planning_kind)}</span>` : '';
     const routineBadge = task.routine_occurrence_id ? `<span class="routine-badge">🔁 ${rt('routineBadge')}</span>` : '';
     const carriedBadge = task.carried_from_date && task.carried_from_date !== task.task_date ? `<span class="carried-badge">${rt('carried')} ${escapeHtml(task.carried_from_date)}</span>` : '';
     const followBadge = task.routine_occurrence_id && task.follow_until_complete && !task.parent_id ? `<span class="follow-badge">◎ ${rt('followBadge')}</span>` : '';
-    const missedBadge = task.routine_occurrence_id && !task.completed && !task.parent_id && task.task_date < today ? `<span class="missed-badge">○ ${rt('missed')}</span>` : '';
+    const missedBadge = task.routine_missed && (task.cancelled || !task.completed) ? `<span class="missed-badge">○ ${rt('missed')}</span>` : '';
     const transferIcon = currentView === 'inbox' ? '📤' : '📥';
     const transferText = currentView === 'inbox' ? (language === 'ar' ? 'نقل إلى اليوم' : 'Move to today') : (language === 'ar' ? 'نقل إلى الحافظة' : 'Move to inbox');
     const parent = tasks.find(entry => entry.id === task.parent_id);
@@ -581,9 +611,9 @@ function render() {
     const canArchive = archiveRoot.completed && archiveRoot.completed_at &&
       tasks.filter(entry => entry.parent_id === archiveRoot.id).every(entry => entry.completed);
     const childContext = parent ? `<span class="sr-only">${escapeHtml(parent.title)}: </span>` : '';
-    const subtaskShortcut = !task.parent_id && children.length ? `<button type="button" class="subtask-shortcut" data-add-subtask>＋ ${language === 'ar' ? 'مهام فرعية' : 'Subtasks'} · ${children.filter(child => child.completed).length}/${children.length}</button>` : '';
-    const dayStarBadge = !task.completed && Number(task.starred) === 2 ? `<span class="day-star-badge">★ ${language === 'ar' ? 'مهمة اليوم' : 'Task of the day'}</span>` : '';
-    item.innerHTML = `<button type="button" class="check-button" data-check aria-label="${language === 'ar' ? (task.completed ? 'جعل المهمة غير مكتملة' : 'إكمال المهمة') : `Mark ${escapeHtml(task.title)} ${task.completed ? 'incomplete' : 'complete'}`}" aria-pressed="${Boolean(task.completed)}"><span aria-hidden="true">✓</span></button>
+    const subtaskShortcut = featureEnabled('subtasks') && !task.parent_id && children.length ? `<button type="button" class="subtask-shortcut" data-add-subtask>＋ ${language === 'ar' ? 'مهام فرعية' : 'Subtasks'} · ${children.filter(child => child.completed).length}/${children.length}</button>` : '';
+    const dayStarBadge = featureEnabled('taskOfDay') && !task.completed && Number(task.starred) === 2 ? `<span class="day-star-badge">★ ${language === 'ar' ? 'مهمة اليوم' : 'Task of the day'}</span>` : '';
+    item.innerHTML = `<button type="button" class="check-button" data-check aria-label="${task.cancelled ? (language === 'ar' ? 'مهمة ملغاة؛ جعلها غير مكتملة' : 'Cancelled task; mark incomplete') : (language === 'ar' ? (task.completed ? 'جعل المهمة غير مكتملة' : 'إكمال المهمة') : `Mark ${escapeHtml(task.title)} ${task.completed ? 'incomplete' : 'complete'}`)}" aria-pressed="${Boolean(task.completed)}"><span aria-hidden="true">${task.completed && task.cancelled ? '❌' : '✓'}</span></button>
       <span class="task-copy">${childContext}<span class="task-title"></span><span class="task-meta">${dayStarBadge}${label}${plan}${routineBadge}${carriedBadge}${followBadge}${missedBadge}</span>${subtaskShortcut}</span>
       <button type="button" class="star-button" data-star><span aria-hidden="true">★</span></button>
       <button type="button" class="task-more" data-task-more aria-label="${language === 'ar' ? 'أدوات المهمة' : 'Task actions'}" aria-expanded="false" aria-controls="task-tools-${task.id}"><span aria-hidden="true">•••</span></button>
@@ -592,12 +622,15 @@ function render() {
       <span class="task-actions">
         <button type="button" class="subtask-button" data-add-subtask aria-label="${task.parent_id ? (language === 'ar' ? 'المهام الفرعية بمستوى واحد فقط' : 'Subtasks are limited to one level') : (language === 'ar' ? 'إضافة مهمة فرعية' : 'Add subtask')}" ${task.parent_id ? 'disabled' : ''}><span aria-hidden="true">➕</span></button>
         <button type="button" data-day-star ${task.completed || Number(task.starred) === 2 ? 'disabled' : ''}><span aria-hidden="true">★</span></button>
+        <button type="button" class="edit-button" data-edit aria-label="${language === 'ar' ? 'تعديل المهمة' : `Edit ${escapeHtml(task.title)}`} "><span aria-hidden="true">✏️</span></button>
+        <span class="task-disposition" role="group" aria-label="${language === 'ar' ? 'تغيير حالة المهمة أو حذفها' : 'Change task status or delete'}"><span class="task-disposition-buttons">
+          <button type="button" data-cancel-task class="${task.cancelled ? 'complete-action' : ''}" aria-label="${task.cancelled ? (language === 'ar' ? 'تغيير المهمة من ملغاة إلى مكتملة' : 'Change cancelled task to completed') : (language === 'ar' ? 'إلغاء المهمة ووضعها ضمن المكتملة' : 'Cancel task and mark complete')}"><span aria-hidden="true">${task.cancelled ? '✅' : '❌'}</span></button>
+          <button type="button" class="delete-button" data-delete aria-label="${language === 'ar' ? 'حذف المهمة' : `Delete ${escapeHtml(task.title)}`}"><span aria-hidden="true">🗑️</span></button>
+        </span></span>
         <button type="button" class="label-button" data-label aria-label="${language === 'ar' ? 'وسم المهمة' : `Label ${escapeHtml(task.title)}`} "><span aria-hidden="true">🏷️</span></button>
         <button type="button" class="routine-button" data-make-routine aria-label="${language === 'ar' ? 'تحويل إلى روتين' : 'Make recurring'}" ${task.parent_id || task.routine_occurrence_id ? 'disabled' : ''}><span aria-hidden="true">🔁</span></button>
         <button type="button" data-archive ${canArchive ? '' : 'disabled'} title="${language === 'ar' ? 'نقل المهمة وخطواتها المكتملة إلى يوم الإنجاز' : 'Move the completed task and its subtasks to the completion day'}"><span aria-hidden="true">🗃️</span></button>
         <button type="button" class="transfer-button" data-transfer aria-label="${transferText}: ${escapeHtml(task.title)}" ${task.routine_occurrence_id ? 'disabled' : ''}><span aria-hidden="true">${transferIcon}</span></button>
-        <button type="button" class="edit-button" data-edit aria-label="${language === 'ar' ? 'تعديل المهمة' : `Edit ${escapeHtml(task.title)}`} "><span aria-hidden="true">✏️</span></button>
-        <button type="button" class="delete-button" data-delete aria-label="${language === 'ar' ? 'حذف المهمة' : `Delete ${escapeHtml(task.title)}`} "><span aria-hidden="true">🗑️</span></button>
       </span>
       <span class="hierarchy-actions">
         <button type="button" data-outlist aria-label="${language === 'ar' ? 'جعل المهمة مستقلة' : 'Make task independent'}" ${task.parent_id ? '' : 'disabled'}>✉️</button>
@@ -608,12 +641,17 @@ function render() {
         <button type="button" data-move="down" aria-label="${language === 'ar' ? 'نقل لأسفل' : 'Move down'}" ${activeLabel || peerIndex === peers.length - 1 ? 'disabled' : ''}>↓</button>
       </span></span>`;
     item.querySelector('.task-title').textContent = task.title;
+    if (completingTasks.has(task.id)) {
+      item.querySelector('[data-check]').disabled = true;
+      item.querySelector('[data-cancel-task]').disabled = true;
+    }
     updateStarButton(item.querySelector('[data-star]'), task, Number(task.starred));
     const actionLabels = [
       ['[data-edit]', 'Edit', 'تعديل'], ['[data-add-subtask]', 'Subtask', 'مهمة فرعية'],
       ['[data-make-routine]', 'Repeat', 'تكرار'], ['[data-label]', 'Label', 'وسم'],
       ['[data-transfer]', currentView === 'inbox' ? 'To today' : 'To inbox', currentView === 'inbox' ? 'إلى اليوم' : 'إلى الحافظة'],
       ['[data-delete]', 'Delete', 'حذف'], ['[data-enlist]', 'Nest task', 'جعلها فرعية'],
+      ['[data-cancel-task]', task.cancelled ? 'Complete' : 'Cancel', task.cancelled ? 'إكمال' : 'إلغاء'],
       ['[data-day-star]', 'Task of the day', 'مهمة اليوم'],
       ['[data-archive]', 'Archive (completion day)', 'أرشفة (إلى يوم الإنجاز)'],
       ['[data-outlist]', 'Unnest task', 'جعلها مستقلة'], ['[data-move="up"]', 'Move up', 'نقل لأعلى'],
@@ -637,11 +675,11 @@ function render() {
 
 function syncTasksFromDom() {
   const order = [...list.querySelectorAll('.task')].map(item => Number(item.dataset.id));
-  tasks = TasklineOrder.reorder(tasks, order);
+  tasks = TasklineOrder.reorder(tasks, order, orderingOptions());
 }
 
 function moveTaskRows(active, target, below) {
-  if (activeLabel || !active || !target || active === target) return;
+  if (!featureEnabled('reordering') || activeLabel || !active || !target || active === target) return;
   const task = tasks.find(entry => entry.id === Number(active.dataset.id));
   let destination = tasks.find(entry => entry.id === Number(target.dataset.id));
   if (task.parent_id) {
@@ -687,15 +725,15 @@ async function loadTasks() {
 async function loadActiveDays(through = TasklineCalendar.statusThrough(currentDate)) {
   try {
     const days = await api(`/api/task-days?through=${through}`);
-    activeDays = new Set(days.map(day => day.task_date));
-    completedDays = new Set(days.filter(day => Number(day.task_count) > 0 && Number(day.incomplete_count) === 0).map(day => day.task_date));
+    calendarDays = new Map(days.map(day => [day.task_date, day]));
+    completedDays = new Set(days.filter(day => TasklineCalendar.dayStatus(day, today) === 'complete').map(day => day.task_date));
     renderCalendar();
   } catch { renderCalendar(); }
 }
 
 async function loadOverdue() {
   syncLocalToday();
-  if (currentView === 'inbox' || currentDate !== today) { overdueSection.hidden = true; return; }
+  if (!featureEnabled('overdue') || currentView !== 'day' || currentDate !== today) { overdueSection.hidden = true; return; }
   try {
     const overdue = await api(`/api/tasks/overdue?before=${today}`);
     overdueSection.hidden = overdue.length === 0;
@@ -704,7 +742,7 @@ async function loadOverdue() {
     overdue.forEach(task => {
       const item = document.createElement('li');
       const inboxAction = task.routine_occurrence_id ? '' : `<button type="button" class="overdue-icon" data-overdue-action="inbox" data-task-id="${task.id}" aria-label="${rt('toInbox')}" title="${rt('toInbox')}">📥</button>`;
-      item.innerHTML = `<span><strong></strong><small></small></span><span class="overdue-actions${task.routine_occurrence_id ? ' routine-overdue' : ''}"><button type="button" class="overdue-primary" data-overdue-action="today" data-task-id="${task.id}">${rt('moveToday')}</button>${inboxAction}<button type="button" class="overdue-icon" data-overdue-action="ignore" data-task-id="${task.id}" aria-label="${rt('ignore')}" title="${rt('ignore')}">🚫</button></span>`;
+      item.innerHTML = `<span><strong></strong><small></small></span><span class="overdue-actions${task.routine_occurrence_id ? ' routine-overdue' : ''}"><button type="button" class="overdue-complete" data-overdue-action="complete" data-task-id="${task.id}" data-original-date="${task.task_date}" aria-label="${rt('completeOriginal')}: ${task.task_date}" title="${rt('completeOriginal')}: ${task.task_date}"><span aria-hidden="true">✓</span> ${rt('complete')}</button><button type="button" class="overdue-primary" data-overdue-action="today" data-task-id="${task.id}">${rt('moveToday')}</button>${inboxAction}<button type="button" class="overdue-icon" data-overdue-action="ignore" data-task-id="${task.id}" aria-label="${rt('ignore')}" title="${rt('ignore')}">🚫</button></span>`;
       item.querySelector('strong').textContent = task.title;
       item.querySelector('small').textContent = `${new Intl.DateTimeFormat(language === 'ar' ? 'ar' : 'en', { month: 'short', day: 'numeric' }).format(fromISO(task.task_date))}${task.routine_occurrence_id ? ` · ${rt('routineBadge')}` : ''}`;
       overdueList.appendChild(item);
@@ -719,22 +757,31 @@ async function selectDate(value) {
   await Promise.all([loadTasks(), loadOverdue(), loadActiveDays(TasklineCalendar.statusThrough(value))]);
 }
 
-async function toggleTask(task) {
+async function toggleTask(task, cancelled = false, completed = null) {
   await flushStarClicks();
+  if (completingTasks.has(task.id)) return;
+  completingTasks.add(task.id);
   task = tasks.find(entry => entry.id === task.id) || task;
   const previous = Boolean(task.completed);
-  task.completed = !previous;
+  const previousCancelled = Boolean(task.cancelled);
+  task.completed = completed ?? (cancelled || !previous);
+  task.cancelled = cancelled;
   render();
   try {
-    const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ completed: Boolean(task.completed) }) });
+    const updated = await api(`/api/tasks/${task.id}`, { method: 'PUT', body: JSON.stringify({ completed: Boolean(task.completed), cancelled }) });
     task.completed = Boolean(updated.completed);
+    task.cancelled = Boolean(updated.cancelled);
     await Promise.all([loadTasks(), loadActiveDays()]);
-    announcer.textContent = `${task.title} marked ${task.completed ? 'complete' : 'incomplete'}.`;
+    announcer.textContent = language === 'ar' ? `${task.title}: ${task.cancelled ? 'ملغاة' : task.completed ? 'مكتملة' : 'غير مكتملة'}` : `${task.title} marked ${task.cancelled ? 'cancelled' : task.completed ? 'complete' : 'incomplete'}.`;
     loadOverdue();
   } catch (err) {
     task.completed = previous;
+    task.cancelled = previousCancelled;
     render();
     error.textContent = err.message;
+  } finally {
+    completingTasks.delete(task.id);
+    render();
   }
 }
 
@@ -782,7 +829,7 @@ function renderSubtaskDialog() {
   preview.replaceChildren();
   children.forEach(task => {
     const row = document.createElement('li');
-    row.textContent = `${task.completed ? '✓' : '○'} ${task.title}`;
+    row.textContent = `${task.completed ? (task.cancelled ? '❌' : '✓') : '○'} ${task.title}`;
     row.classList.toggle('completed', Boolean(task.completed));
     preview.appendChild(row);
   });
@@ -790,6 +837,7 @@ function renderSubtaskDialog() {
 }
 
 function addSubtask(task) {
+  if (!featureEnabled('subtasks')) return;
   if (task.parent_id) return;
   subtaskParent = task;
   subtaskInput.value = '';
@@ -864,7 +912,7 @@ async function archiveTask(task) {
 function updateStarButton(button, task, level) {
   const active = !task.completed && level > 0;
   button.classList.toggle('starred', active);
-  button.classList.toggle('day-star', active && level === 2);
+  button.classList.toggle('day-star', active && level === 2 && featureEnabled('taskOfDay'));
   button.classList.toggle('remembered-star', Boolean(task.completed && level));
   button.disabled = Boolean(task.completed);
   button.setAttribute('aria-pressed', String(active));
@@ -872,10 +920,11 @@ function updateStarButton(button, task, level) {
     ? (language === 'ar' ? 'المهمة مكتملة؛ النجمة غير محسوبة' : 'Completed; star does not count')
     : (level ? (language === 'ar' ? 'إزالة النجمة' : 'Remove star') : (language === 'ar' ? 'تمييز بنجمة' : 'Star task'));
   button.setAttribute('aria-label', `${description}: ${task.title}`);
-  button.title = `${description}. ${language === 'ar' ? 'اضغط مطولًا لاختيار مهمة اليوم، أو اخترها من أدوات المهمة.' : 'Hold for task of the day, or choose it in task actions.'}`;
+  button.title = featureEnabled('taskOfDay') ? `${description}. ${language === 'ar' ? 'اضغط مطولًا لاختيار مهمة اليوم، أو اخترها من أدوات المهمة.' : 'Hold for task of the day, or choose it in task actions.'}` : description;
 }
 
 function toggleStar(task, level = null) {
+  if (!featureEnabled('stars') || level === 2 && !featureEnabled('taskOfDay')) return starWrites;
   if (!task) return starWrites;
   starWrites = starWrites.then(async () => {
     task = tasks.find(entry => entry.id === task.id) || task;
@@ -912,6 +961,7 @@ async function flushStarClicks() {
 
 list.addEventListener('pointerdown', event => {
   const button = event.target.closest('[data-star]');
+  if (!featureEnabled('taskOfDay')) return;
   if (!button || button.disabled || event.button !== 0) return;
   cancelStarPress();
   suppressStarClickUntil = 0;
@@ -1002,7 +1052,7 @@ form.addEventListener('submit', async event => {
   const button = form.querySelector('button'); button.disabled = true;
   try {
     const task = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ title: input.value, task_date: currentDate, location: currentView === 'inbox' ? 'inbox' : 'day', planning_kind: plan.kind, planning_value: plan.value }) });
-    tasks.push(task); input.value = ''; render(); input.focus(); announcer.textContent = `${task.title} added.`;
+    input.value = ''; await loadTasks(); input.focus(); announcer.textContent = `${task.title} added.`;
     loadActiveDays();
   } catch (err) { error.textContent = err.message; }
   finally { button.disabled = false; }
@@ -1073,6 +1123,12 @@ list.addEventListener('click', event => {
   if (outlist && !outlist.disabled) { changeHierarchy(tasks.find(task => task.id === Number(outlist.closest('.task').dataset.id)), null); return; }
   const remove = event.target.closest('[data-delete]');
   if (remove) { deleteTask(tasks.find(task => task.id === Number(remove.closest('.task').dataset.id))); return; }
+  const cancel = event.target.closest('[data-cancel-task]');
+  if (cancel) {
+    const task = tasks.find(task => task.id === Number(cancel.closest('.task').dataset.id));
+    toggleTask(task, !task.cancelled, true);
+    return;
+  }
   const button = event.target.closest('[data-move]');
   if (!button || button.disabled) return;
   const item = button.closest('.task');
@@ -1089,7 +1145,7 @@ list.addEventListener('click', event => {
 });
 
 list.addEventListener('dragstart', event => {
-  if (activeLabel || event.target.closest('button')) { event.preventDefault(); return; }
+  if (!featureEnabled('reordering') || activeLabel || event.target.closest('button')) { event.preventDefault(); return; }
   const item = event.target.closest('.task'); if (!item) return;
   draggedId = Number(item.dataset.id); event.dataTransfer.effectAllowed = 'move'; requestAnimationFrame(() => item.classList.add('dragging'));
 });
@@ -1100,7 +1156,7 @@ list.addEventListener('dragend', () => {
 });
 
 list.addEventListener('pointerdown', event => {
-  if (activeLabel || event.pointerType === 'mouse' || !event.target.closest('.grip')) return;
+  if (!featureEnabled('reordering') || activeLabel || event.pointerType === 'mouse' || !event.target.closest('.grip')) return;
   const item = event.target.closest('.task'); draggedId = Number(item.dataset.id); item.setPointerCapture(event.pointerId); item.classList.add('dragging');
 });
 list.addEventListener('pointermove', event => {
@@ -1114,6 +1170,7 @@ list.addEventListener('pointerup', event => {
 
 // Swiping remains an alternative to the visible task-actions button.
 list.addEventListener('pointerdown', event => {
+  if (!featureEnabled('swipeActions')) return;
   if (event.pointerType === 'mouse' || event.target.closest('button, .grip')) return;
   const item = event.target.closest('.task');
   if (!item) return;
@@ -1147,6 +1204,9 @@ document.querySelector('#previous-day').addEventListener('click', () => selectDa
 document.querySelector('#next-day').addEventListener('click', () => selectDate(shifted(currentDate, 1)));
 todayButton.addEventListener('click', () => selectDate(today));
 monthPicker.addEventListener('click', openMonthCalendar);
+document.querySelector('#simple-date').addEventListener('change', event => {
+  if (event.target.value && event.target.validity.valid) selectDate(event.target.value);
+});
 document.querySelector('#month-dialog-previous').addEventListener('click', () => moveCalendarMonth(-1));
 document.querySelector('#month-dialog-next').addEventListener('click', () => moveCalendarMonth(1));
 document.querySelector('#month-dialog-close').addEventListener('click', () => monthDialog.close());
@@ -1187,33 +1247,50 @@ weekStrip.addEventListener('pointerup', event => {
 
 overdueList.addEventListener('click', async event => {
   const button = event.target.closest('[data-overdue-action]');
-  if (!button) return;
+  if (!button || button.disabled) return;
+  const buttons = [...button.closest('.overdue-actions').querySelectorAll('button')];
+  buttons.forEach(control => { control.disabled = true; });
+  error.textContent = '';
+  document.querySelector('#task-notice').textContent = '';
   try {
     syncLocalToday();
-    await api(`/api/tasks/${button.dataset.taskId}/overdue-action`, { method: 'POST', body: JSON.stringify({ action: button.dataset.overdueAction, target_date: today }) });
+    const result = await api(`/api/tasks/${button.dataset.taskId}/overdue-action`, { method: 'POST', body: JSON.stringify({ action: button.dataset.overdueAction, target_date: today, original_date: button.dataset.originalDate, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
     await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
-    announcer.textContent = language === 'ar' ? 'تم تحديث المهمة المتأخرة.' : 'Overdue task updated.';
+    if (result.action === 'complete') {
+      document.querySelector('#task-notice').textContent = language === 'ar'
+        ? `اكتملت المهمة في يومها ${result.task_date} دون نقلها إلى اليوم.`
+        : `Completed in its original day (${result.task_date}), without moving it to today.`;
+    } else announcer.textContent = language === 'ar' ? 'تم تحديث المهمة المتأخرة.' : 'Overdue task updated.';
   } catch (err) { error.textContent = err.message; }
+  finally { buttons.forEach(control => { if (control.isConnected) control.disabled = false; }); }
 });
 
 async function setView(view) {
+  if (!TasklineSettings.available(view)) view = 'day';
   await flushStarClicks();
   document.querySelector('#task-notice').textContent = '';
   currentView = view;
+  if (view !== 'inbox') inboxSubView = 'inbox';
   activeLabel = '';
   if (view !== 'lists') setListsEditing(false);
   document.body.classList.toggle('inbox-view', view === 'inbox');
   document.body.classList.toggle('routines-view', view === 'routines');
   document.body.classList.toggle('lists-view', view === 'lists');
+  document.body.classList.toggle('settings-view', view === 'settings');
   if (view !== 'inbox') document.body.classList.remove('dreams-view', 'history-view');
   navToday.classList.toggle('active', view === 'day');
   navInbox.classList.toggle('active', view === 'inbox');
   navRoutines.classList.toggle('active', view === 'routines');
   navLists.classList.toggle('active', view === 'lists');
   [navToday, navInbox, navRoutines, navLists].forEach(button => button.removeAttribute('aria-current'));
-  ({ day: navToday, inbox: navInbox, routines: navRoutines, lists: navLists })[view].setAttribute('aria-current', 'page');
+  TasklineSettings.renderFooter();
   input.placeholder = view === 'inbox' ? t('later') : t('add');
   renderCalendar();
+  if (view === 'settings') {
+    overdueSection.hidden = true;
+    TasklineSettings.render();
+    return;
+  }
   if (view === 'routines') {
     overdueSection.hidden = true;
     await loadRoutines();
@@ -1228,11 +1305,13 @@ async function setView(view) {
 }
 
 async function setInboxSubView(view) {
+  if (view === 'dreams' && !featureEnabled('dreams') || view === 'history' && !featureEnabled('planned')) view = 'inbox';
   inboxSubView = view;
   document.body.classList.toggle('dreams-view', view === 'dreams');
   document.body.classList.toggle('history-view', view === 'history');
   [inboxTab, dreamsTab, historyTab].forEach(button => button.classList.remove('active'));
   ({ inbox: inboxTab, dreams: dreamsTab, history: historyTab })[view].classList.add('active');
+  TasklineSettings.renderFooter();
   if (view === 'dreams') await loadDreams();
   if (view === 'history') await loadHistory();
 }
@@ -1306,7 +1385,8 @@ async function loadHistory() {
       container.innerHTML = '';
       Object.entries(groups).forEach(([period, periodTasks]) => {
         const group = document.createElement('section'); group.className = 'history-group'; group.innerHTML = `<h3>${period}</h3>`;
-        periodTasks.forEach(task => { const row = document.createElement('p'); row.className = task.completed ? 'done' : ''; row.textContent = `${task.completed ? '✓' : '○'} ${task.title}`; group.appendChild(row); });
+        const orderedTasks = TasklineOrder.order(periodTasks, { prioritySort: false, completedLast: featureEnabled('completedLast') });
+        orderedTasks.forEach(task => { const row = document.createElement('p'); row.className = task.completed ? 'done' : ''; row.textContent = `${task.completed ? (task.cancelled ? '❌' : '✓') : '○'} ${task.title}`; group.appendChild(row); });
         container.appendChild(group);
       });
       if (!items.length) container.innerHTML = `<p class="history-range">${language === 'ar' ? 'لا توجد مهام في هذه الفترة.' : 'No tasks in this period.'}</p>`;
@@ -1385,12 +1465,23 @@ function routineSummary(routine) {
 function renderRoutines() {
   routineList.innerHTML = '';
   if (!routines.length) routineList.innerHTML = `<p class="history-range">${rt('noRoutines')}</p>`;
-  routines.forEach(routine => {
+  routines.forEach((routine, index) => {
     const card = document.createElement('article');
     card.className = `routine-card${routine.active ? '' : ' paused'}`;
-    card.innerHTML = `<div><h3></h3><p></p></div><span class="routine-card-actions"><button type="button" data-routine-edit aria-label="${language === 'ar' ? 'تعديل الروتين' : 'Edit routine'}">✏️</button><button type="button" data-routine-toggle aria-label="${routine.active ? (language === 'ar' ? 'إيقاف مؤقت' : 'Pause') : (language === 'ar' ? 'استئناف' : 'Resume')}">${routine.active ? '⏸️' : '▶️'}</button><button type="button" class="routine-delete" data-routine-delete aria-label="${language === 'ar' ? 'إيقاف الروتين نهائيًا' : 'Stop routine'}">🗑️</button></span>`;
+    card.dataset.routineId = routine.id;
+    card.innerHTML = `<div><h3></h3><p></p></div><span class="routine-card-actions"><button type="button" data-routine-up aria-label="${language === 'ar' ? 'نقل الروتين للأعلى' : 'Move routine up'}" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-routine-down aria-label="${language === 'ar' ? 'نقل الروتين للأسفل' : 'Move routine down'}" ${index === routines.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-routine-edit aria-label="${language === 'ar' ? 'تعديل الروتين' : 'Edit routine'}">✏️</button><button type="button" data-routine-toggle aria-label="${routine.active ? (language === 'ar' ? 'إيقاف مؤقت' : 'Pause') : (language === 'ar' ? 'استئناف' : 'Resume')}">${routine.active ? '⏸️' : '▶️'}</button><button type="button" class="routine-delete" data-routine-delete aria-label="${language === 'ar' ? 'إيقاف الروتين نهائيًا' : 'Stop routine'}">🗑️</button></span>`;
     card.querySelector('h3').textContent = `${routine.title} · ${routine.active ? rt('active') : rt('paused')}`;
     card.querySelector('p').textContent = routineSummary(routine);
+    const dragHandle = document.createElement('button');
+    dragHandle.type = 'button';
+    dragHandle.dataset.routineDrag = '';
+    dragHandle.setAttribute('aria-label', `${language === 'ar' ? 'اسحب لإعادة ترتيب الروتين' : 'Drag to reorder routine'}: ${routine.title}`);
+    dragHandle.title = dragHandle.getAttribute('aria-label');
+    dragHandle.innerHTML = grip();
+    dragHandle.hidden = !featureEnabled('reordering');
+    card.querySelector('.routine-card-actions').prepend(dragHandle);
+    card.querySelector('[data-routine-up]').addEventListener('click', () => moveRoutine(index, -1));
+    card.querySelector('[data-routine-down]').addEventListener('click', () => moveRoutine(index, 1));
     card.querySelector('[data-routine-edit]').addEventListener('click', () => editRoutine(routine));
     card.querySelector('[data-routine-toggle]').addEventListener('click', () => toggleRoutine(routine));
     card.querySelector('[data-routine-delete]').addEventListener('click', () => deleteRoutine(routine));
@@ -1400,6 +1491,98 @@ function renderRoutines() {
   routineStatsFilter.innerHTML = `<option value="">${rt('allRoutines')}</option>${routines.map(routine => `<option value="${routine.id}">${escapeHtml(routine.title)}</option>`).join('')}`;
   routineStatsFilter.value = routines.some(routine => String(routine.id) === selected) ? selected : '';
 }
+
+let movingRoutine = false;
+async function moveRoutine(index, offset) {
+  const target = index + offset;
+  if (movingRoutine || target < 0 || target >= routines.length) return;
+  const ordered = [...routines];
+  [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+  await saveRoutineOrder(ordered, ordered[target].id, offset < 0 ? '[data-routine-up]' : '[data-routine-down]');
+}
+
+async function saveRoutineOrder(ordered, focusId, focusSelector = '[data-routine-drag]') {
+  if (movingRoutine) return;
+  movingRoutine = true;
+  const space = workspace;
+  routineList.setAttribute('aria-busy', 'true');
+  routineList.querySelectorAll('button').forEach(button => { button.disabled = true; });
+  try {
+    await api('/api/routines/reorder', { method: 'PUT', body: JSON.stringify({ ids: ordered.map(routine => routine.id) }) });
+    if (workspace === space && currentView === 'routines') {
+      routines = ordered;
+      renderRoutines();
+      const card = routineList.querySelector(`[data-routine-id="${focusId}"]`);
+      const control = card?.querySelector(focusSelector);
+      (control?.disabled ? card.querySelector('[data-routine-drag]') : control)?.focus({ preventScroll: true });
+      announcer.textContent = language === 'ar' ? 'تم حفظ ترتيب الروتين.' : 'Routine order saved.';
+    }
+  } catch (err) {
+    if (workspace === space) { error.textContent = err.message; await loadRoutines(); }
+  } finally {
+    movingRoutine = false;
+    routineList.removeAttribute('aria-busy');
+  }
+}
+
+let routineDrag = null;
+function placeRoutineDrag() {
+  const drag = routineDrag;
+  if (!drag?.moved) return;
+  const target = document.elementFromPoint(drag.x, drag.y)?.closest('.routine-card');
+  if (!target || target === drag.card || target.parentElement !== routineList) return;
+  const rect = target.getBoundingClientRect();
+  const anchor = drag.y > rect.top + rect.height / 2 ? target.nextSibling : target;
+  if (anchor !== drag.card) routineList.insertBefore(drag.card, anchor);
+}
+function scrollRoutineDrag() {
+  if (!routineDrag?.moved) return;
+  if (workspace !== routineDrag.workspace || currentView !== 'routines') { finishRoutineDrag(true); return; }
+  const top = document.querySelector('.app-header').getBoundingClientRect().bottom + 48;
+  const bottom = document.querySelector('.bottom-nav').getBoundingClientRect().top - 48;
+  const distance = routineDrag.y < top ? -10 : routineDrag.y > bottom ? 10 : 0;
+  if (distance) { window.scrollBy(0, distance); placeRoutineDrag(); }
+  routineDrag.frame = requestAnimationFrame(scrollRoutineDrag);
+}
+function finishRoutineDrag(cancelled = false) {
+  const drag = routineDrag;
+  if (!drag) return;
+  routineDrag = null;
+  cancelAnimationFrame(drag.frame);
+  if (routineList.hasPointerCapture(drag.pointerId)) routineList.releasePointerCapture(drag.pointerId);
+  drag.card.classList.remove('routine-dragging');
+  if (cancelled || workspace !== drag.workspace || currentView !== 'routines') {
+    if (workspace === drag.workspace && currentView === 'routines') renderRoutines();
+    return;
+  }
+  const ids = [...routineList.querySelectorAll('.routine-card')].map(card => Number(card.dataset.routineId));
+  if (drag.moved && ids.some((id, index) => id !== routines[index]?.id)) {
+    saveRoutineOrder(ids.map(id => routines.find(routine => routine.id === id)), Number(drag.card.dataset.routineId));
+  }
+}
+routineList.addEventListener('pointerdown', event => {
+  if (movingRoutine || routineDrag || !featureEnabled('reordering') || event.button !== 0 || !event.target.closest('[data-routine-drag]')) return;
+  const card = event.target.closest('.routine-card');
+  event.preventDefault();
+  routineDrag = { card, workspace, pointerId: event.pointerId, x: event.clientX, y: event.clientY, startY: event.clientY, moved: false };
+  routineList.setPointerCapture(event.pointerId);
+});
+routineList.addEventListener('pointermove', event => {
+  if (!routineDrag || routineDrag.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  routineDrag.x = event.clientX;
+  routineDrag.y = event.clientY;
+  if (!routineDrag.moved && Math.abs(event.clientY - routineDrag.startY) >= 6) {
+    routineDrag.moved = true;
+    routineDrag.card.classList.add('routine-dragging');
+    scrollRoutineDrag();
+  }
+  placeRoutineDrag();
+});
+routineList.addEventListener('pointerup', () => finishRoutineDrag());
+routineList.addEventListener('pointercancel', () => finishRoutineDrag(true));
+routineList.addEventListener('lostpointercapture', () => finishRoutineDrag(true));
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && routineDrag) finishRoutineDrag(true); });
 
 async function loadRoutines() {
   try {
@@ -1423,7 +1606,7 @@ function setListsEditing(editing) {
 function orderChecklistsForDisplay(source) {
   let savedIds = [];
   try {
-    const saved = JSON.parse(localStorage.getItem(checklistOrderKey()) || '[]');
+    const saved = JSON.parse(TasklineStorage.getItem(checklistOrderKey()) || '[]');
     if (Array.isArray(saved)) savedIds = saved.map(Number);
   } catch { savedIds = []; }
   const byId = new Map(source.map(checklist => [checklist.id, checklist]));
@@ -1437,7 +1620,7 @@ function orderChecklistsForDisplay(source) {
 }
 
 function saveChecklistOrder() {
-  localStorage.setItem(checklistOrderKey(), JSON.stringify(checklists.map(checklist => checklist.id)));
+  TasklineStorage.setItem(checklistOrderKey(), JSON.stringify(checklists.map(checklist => checklist.id)));
 }
 
 function moveChecklist(index, offset) {
@@ -1461,7 +1644,7 @@ function renderLists() {
   checklists.forEach((checklist, index) => {
     const card = document.createElement('article');
     const collapsedKey = `taskline-list-collapsed-${workspace}-${checklist.id}`;
-    const collapsed = localStorage.getItem(collapsedKey) === '1';
+    const collapsed = featureEnabled('listCollapse') && TasklineStorage.getItem(collapsedKey) === '1';
     card.className = `checklist-card${collapsed ? ' collapsed' : ''}`;
     const completed = checklist.items.filter(item => item.completed).length;
     card.innerHTML = `<header class="checklist-heading"><div><h3></h3><p></p></div><span class="checklist-actions"><button type="button" class="checklist-collapse" data-list-collapse aria-expanded="${!collapsed}" aria-label="${lt(collapsed ? 'expand' : 'collapse')}">${collapsed ? '▸' : '▾'}</button><button type="button" class="list-management-action" data-list-move="up" aria-label="${lt('moveUp')}" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" class="list-management-action" data-list-move="down" aria-label="${lt('moveDown')}" ${index === checklists.length - 1 ? 'disabled' : ''}>↓</button><button type="button" class="list-management-action" data-list-rename aria-label="${lt('rename')}">✏️</button><button type="button" class="checklist-delete list-management-action" data-list-delete aria-label="${lt('remove')}">🗑️</button></span></header><ul class="checklist-items"></ul><p class="checklist-empty" hidden></p><form class="checklist-item-form"><label class="sr-only">${lt('itemPlaceholder')}</label><input maxlength="280" placeholder="${lt('itemPlaceholder')}" required><button type="submit">${lt('addItem')}</button></form>`;
@@ -1504,7 +1687,7 @@ function renderLists() {
     });
     card.querySelector('[data-list-collapse]').addEventListener('click', event => {
       const isCollapsed = card.classList.toggle('collapsed');
-      localStorage.setItem(collapsedKey, isCollapsed ? '1' : '0');
+      TasklineStorage.setItem(collapsedKey, isCollapsed ? '1' : '0');
       event.currentTarget.textContent = isCollapsed ? '▸' : '▾';
       event.currentTarget.setAttribute('aria-expanded', String(!isCollapsed));
       event.currentTarget.setAttribute('aria-label', lt(isCollapsed ? 'expand' : 'collapse'));
@@ -1523,7 +1706,7 @@ function renderLists() {
       if (!window.confirm(lt('confirmRemove'))) return;
       try {
         await api(`/api/lists/${checklist.id}`, { method: 'DELETE' });
-        localStorage.removeItem(collapsedKey);
+        TasklineStorage.removeItem(collapsedKey);
         checklists = checklists.filter(entry => entry.id !== checklist.id);
         saveChecklistOrder();
         await loadLists();
@@ -1601,6 +1784,8 @@ async function prepareRoutineFromTask(task) {
 let routineChartState = null;
 
 function drawRoutineChart(result) {
+  const palette = getComputedStyle(document.body);
+  const color = token => palette.getPropertyValue(token).trim();
   const metric = routineStatsMetric.value;
   const container = routineChart.parentElement;
   const width = Math.max(280, container.clientWidth);
@@ -1617,7 +1802,7 @@ function drawRoutineChart(result) {
   const values = result.points.map(point => metric === 'percentage' ? point.percentage : point.completed);
   const drawable = result.points.map((point, index) => ({ point, index, value: values[index] })).filter(item => item.value !== null);
   const maxValue = metric === 'percentage' ? 100 : Math.max(1, ...values.filter(value => value !== null));
-  context.strokeStyle = '#dcddd6'; context.lineWidth = 1; context.fillStyle = '#718078'; context.font = '10px DM Sans, sans-serif';
+  context.strokeStyle = color('--line'); context.lineWidth = 1; context.fillStyle = color('--muted'); context.font = '10px DM Sans, sans-serif';
   [0, .5, 1].forEach(ratio => {
     const y = padding.top + chartHeight * (1 - ratio);
     context.beginPath(); context.moveTo(padding.left, y); context.lineTo(width - padding.right, y); context.stroke();
@@ -1625,15 +1810,15 @@ function drawRoutineChart(result) {
   });
   const xFor = index => padding.left + (result.points.length === 1 ? chartWidth / 2 : chartWidth * index / (result.points.length - 1));
   const yFor = value => padding.top + chartHeight * (1 - value / maxValue);
-  context.strokeStyle = '#28553f'; context.lineWidth = 2.5; context.lineJoin = 'round'; context.lineCap = 'round';
+  context.strokeStyle = color('--green'); context.lineWidth = 2.5; context.lineJoin = 'round'; context.lineCap = 'round';
   context.beginPath();
   drawable.forEach((item, index) => { const x = xFor(item.index); const y = yFor(item.value); if (index === 0) context.moveTo(x, y); else context.lineTo(x, y); });
   context.stroke();
   if (drawable.length <= 31) {
-    context.fillStyle = '#ee7049';
+    context.fillStyle = color('--accent');
     drawable.forEach(item => { context.beginPath(); context.arc(xFor(item.index), yFor(item.value), 3.5, 0, Math.PI * 2); context.fill(); });
   }
-  context.fillStyle = '#718078';
+  context.fillStyle = color('--muted');
   context.fillText(result.start, padding.left, height - 7);
   const endWidth = context.measureText(result.end).width;
   context.fillText(result.end, width - padding.right - endWidth, height - 7);
@@ -1651,6 +1836,11 @@ async function loadRoutineStats() {
     drawRoutineChart(result);
   } catch (err) { error.textContent = err.message; }
 }
+
+document.querySelector('#theme-toggle').addEventListener('click', () => TasklineTheme.toggle());
+window.addEventListener('taskline-theme-change', () => {
+  if (routineChartState) drawRoutineChart(routineChartState.result);
+});
 
 navToday.addEventListener('click', () => { currentDate = today; setView('day'); });
 navInbox.addEventListener('click', async () => { await setView('inbox'); setInboxSubView('inbox'); });
@@ -1687,10 +1877,12 @@ editForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (!editingTask || !editTitle.value.trim()) return;
   try {
-    const payload = { title: editTitle.value.trim(), parent_id: null };
+    const payload = { title: editTitle.value.trim() };
     if (editingTask.location === 'inbox') {
-      const plan = planFromWheels(editPlanYear.value, editPlanQuarter.value, editPlanMonth.value);
-      payload.planning_kind = plan.kind; payload.planning_value = plan.value;
+      if (featureEnabled('planning')) {
+        const plan = planFromWheels(editPlanYear.value, editPlanQuarter.value, editPlanMonth.value);
+        payload.planning_kind = plan.kind; payload.planning_value = plan.value;
+      }
     } else {
       if (!editDate.value) return;
       payload.task_date = editDate.value;
@@ -1712,13 +1904,13 @@ document.querySelector('.edit-dialog-close').addEventListener('click', () => edi
 labelFilter.addEventListener('change', () => { activeLabel = labelFilter.value; render(); });
 languageToggle.addEventListener('click', () => {
   language = language === 'en' ? 'ar' : 'en';
-  localStorage.setItem('taskline-language', language);
+  TasklineStorage.setItem('taskline-language', language);
   applyLanguage();
 });
 workspaceToggle.addEventListener('click', async () => {
   await flushStarClicks();
   workspace = workspace === 'personal' ? 'work' : 'personal';
-  localStorage.setItem('taskline-workspace', workspace);
+  TasklineStorage.setItem('taskline-workspace', workspace);
   today = effectiveToday();
   currentDate = today;
   activeLabel = '';
@@ -1743,9 +1935,9 @@ for (let day = 1; day <= 31; day += 1) {
 }
 routineMonthDay.add(new Option('Last day', '-1'));
 for (let month = 1; month <= 12; month += 1) routineYearMonth.add(new Option(String(month), String(month)));
-planningYear.value = localStorage.getItem('taskline-plan-year') || '';
-planningQuarter.value = localStorage.getItem('taskline-plan-quarter') || '';
-planningMonth.value = localStorage.getItem('taskline-plan-month') || '';
+planningYear.value = TasklineStorage.getItem('taskline-plan-year') || '';
+planningQuarter.value = TasklineStorage.getItem('taskline-plan-quarter') || '';
+planningMonth.value = TasklineStorage.getItem('taskline-plan-month') || '';
 [planningYear, planningQuarter, planningMonth].forEach(select => select.addEventListener('change', applyPlanningPreference));
 editPlanMonth.addEventListener('change', () => { if (editPlanMonth.value) editPlanQuarter.value = String(Math.floor(monthCodes.indexOf(editPlanMonth.value) / 3) + 1); });
 applyPlanningPreference();
@@ -1780,8 +1972,8 @@ document.querySelector('#dream-detail-form').addEventListener('submit', async ev
     Object.assign(currentDream, updated); dreamDialog.close(); await loadDreams();
   } catch (err) { error.textContent = err.message; }
 });
-historyPeriod.value = localStorage.getItem('taskline-history-period') || 'month';
-historyPeriod.addEventListener('change', () => { localStorage.setItem('taskline-history-period', historyPeriod.value); loadHistory(); });
+historyPeriod.value = TasklineStorage.getItem('taskline-history-period') || 'month';
+historyPeriod.addEventListener('change', () => { TasklineStorage.setItem('taskline-history-period', historyPeriod.value); loadHistory(); });
 routineFrequency.addEventListener('change', updateRoutineScheduleFields);
 routineEndMode.addEventListener('change', updateRoutineScheduleFields);
 routineStart.addEventListener('change', updateRoutineScheduleFields);
@@ -1798,15 +1990,15 @@ routineForm.addEventListener('submit', async event => {
     announcer.textContent = language === 'ar' ? 'تم حفظ الروتين.' : 'Routine saved.';
   } catch (err) { error.textContent = err.message; }
 });
-routineStatsMetric.value = localStorage.getItem('taskline-routine-chart-metric') || 'percentage';
-routineStatsPeriod.value = localStorage.getItem('taskline-routine-chart-period') || '30';
+routineStatsMetric.value = TasklineStorage.getItem('taskline-routine-chart-metric') || 'percentage';
+routineStatsPeriod.value = TasklineStorage.getItem('taskline-routine-chart-period') || '30';
 routineStatsToggle.addEventListener('click', async () => {
   routineStats.hidden = !routineStats.hidden;
   routineStatsToggle.setAttribute('aria-expanded', String(!routineStats.hidden));
   if (!routineStats.hidden) await loadRoutineStats();
 });
-routineStatsMetric.addEventListener('change', () => { localStorage.setItem('taskline-routine-chart-metric', routineStatsMetric.value); loadRoutineStats(); });
-routineStatsPeriod.addEventListener('change', () => { localStorage.setItem('taskline-routine-chart-period', routineStatsPeriod.value); loadRoutineStats(); });
+routineStatsMetric.addEventListener('change', () => { TasklineStorage.setItem('taskline-routine-chart-metric', routineStatsMetric.value); loadRoutineStats(); });
+routineStatsPeriod.addEventListener('change', () => { TasklineStorage.setItem('taskline-routine-chart-period', routineStatsPeriod.value); loadRoutineStats(); });
 routineStatsFilter.addEventListener('change', loadRoutineStats);
 routineChart.addEventListener('click', event => {
   if (!routineChartState) return;
@@ -1835,8 +2027,42 @@ setInterval(async () => {
   }
 }, 60_000);
 
-resetRoutineForm();
-renderCalendar();
-setupPwa();
-applyLanguage();
-Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
+async function applyFeatureSettings() {
+  TasklineSettings.catalog.forEach(feature => document.documentElement.classList.toggle(`without-${feature.id}`, !featureEnabled(feature.id)));
+  let contextChanged = false;
+  if (!featureEnabled('workspaces') && workspace === 'work') {
+    workspace = 'personal';
+    TasklineStorage.setItem('taskline-workspace', workspace);
+    activeLabel = '';
+    savedLabels = [];
+    contextChanged = true;
+  }
+  contextChanged = syncLocalToday() || contextChanged;
+  if (!featureEnabled('routineStats')) {
+    routineStats.hidden = true;
+    routineStatsToggle.setAttribute('aria-expanded', 'false');
+  }
+  [[labelDialog, 'labels'], [subtaskDialog, 'subtasks'], [monthDialog, 'calendar'], [dreamDialog, 'dreams']].forEach(([dialog, feature]) => {
+    if (!featureEnabled(feature) && dialog.open) dialog.close();
+  });
+  applyWorkspace();
+  if (!TasklineSettings.available(currentView)) await setView('day');
+  else if (currentView === 'inbox') await setInboxSubView(inboxSubView);
+  if (contextChanged) await Promise.all([loadTasks(), loadActiveDays()]);
+  render(); renderCalendar();
+  if (currentView === 'lists') renderLists();
+  await loadOverdue();
+  TasklineSettings.renderFooter();
+}
+
+TasklineSettings.init();
+(async () => {
+  await TasklineSettings.load();
+  await applyFeatureSettings();
+  resetRoutineForm();
+  renderCalendar();
+  setupPwa();
+  applyLanguage();
+  await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
+  window.tasklineReady = true;
+})();

@@ -7,16 +7,17 @@ globalThis.TasklineOrder = {
       children: source.filter(task => task.parent_id === parent.id),
     }));
   },
-  group(family) {
-    if (family.parent.completed) return 3;
+  group(family, options = {}) {
+    if (family.parent.completed && options.completedLast !== false) return family.parent.cancelled ? 4 : 3;
     const active = [family.parent, ...family.children].filter(task => !task.completed);
-    if (active.some(task => Number(task.starred) === 2)) return 0;
+    if (options.prioritySort === false) return 2;
+    if (options.taskOfDay !== false && active.some(task => Number(task.starred) === 2)) return 0;
     return active.some(task => task.starred) ? 1 : 2;
   },
-  order(source) {
+  order(source, options = {}) {
     return this.families(source)
       .map((family, index) => ({ family, index }))
-      .sort((a, b) => this.group(a.family) - this.group(b.family) || a.index - b.index)
+      .sort((a, b) => this.group(a.family, options) - this.group(b.family, options) || a.index - b.index)
       .flatMap(({ family }) => [family.parent, ...family.children]);
   },
   filtered(source, label) {
@@ -24,13 +25,13 @@ globalThis.TasklineOrder = {
       [family.parent, ...family.children].some(task => task.label === label)
     ).flatMap(family => [family.parent, ...family.children]);
   },
-  reorder(source, ids) {
+  reorder(source, ids, options = {}) {
     const rank = new Map(ids.map((id, index) => [id, index]));
     const families = this.families(source);
     const reordered = [...families];
-    for (let group = 0; group <= 3; group += 1) {
+    for (let group = 0; group <= 4; group += 1) {
       const slots = families.map((family, index) => ({ family, index }))
-        .filter(({ family }) => rank.has(family.parent.id) && this.group(family) === group);
+        .filter(({ family }) => rank.has(family.parent.id) && this.group(family, options) === group);
       const ordered = slots.map(({ family }) => family)
         .sort((a, b) => rank.get(a.parent.id) - rank.get(b.parent.id));
       slots.forEach(({ index }, offset) => { reordered[index] = ordered[offset]; });

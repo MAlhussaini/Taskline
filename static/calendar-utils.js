@@ -41,5 +41,18 @@
     return Array.from({ length: 42 }, (_, index) => addDays(toISO(firstVisible), index));
   }
 
-  globalThis.TasklineCalendar = Object.freeze({ addDays, monthStart, monthEnd, statusThrough, monthGrid });
+  function dayStatus(summary, today) {
+    if (!summary || Number(summary.task_count) === 0) return 'noTasks';
+    const ordinaryPending = summary.ordinary_incomplete_count ?? summary.incomplete_count;
+    // Routine history must not erase a completed non-routine plan. Today still
+    // needs attention while any of its current routines remain unfinished.
+    if (Number(summary.ordinary_task_count) > 0 && Number(ordinaryPending) === 0
+        && (summary.task_date !== today || Number(summary.incomplete_count) === 0)) return 'complete';
+    if (Number(summary.incomplete_count) === 0) return Number(summary.missed_count) > 0 ? 'missed' : 'complete';
+    // Use the workspace's logical today, never the selected calendar date.
+    if (summary.task_date === today || Number(ordinaryPending) > 0) return 'incomplete';
+    return 'routine';
+  }
+
+  globalThis.TasklineCalendar = Object.freeze({ addDays, monthStart, monthEnd, statusThrough, monthGrid, dayStatus });
 })();

@@ -47,3 +47,40 @@ test("wires the full-month calendar and both completion states", async () => {
   assert.match(css, /\.month-day\.has-tasks/);
   assert.match(css, /\.month-day\.has-tasks\.all-complete/);
 });
+
+test("routine reminders are red only on logical today, with truthful green and mixed days", async () => {
+  const { dayStatus } = await loadCalendarTools();
+  const today = '2026-10-28';
+  assert.equal(dayStatus(undefined, today), 'noTasks');
+  for (const day of ['2026-10-27', today, '2026-10-29']) {
+    const summary = { task_date: day, task_count: 3, incomplete_count: 2, ordinary_incomplete_count: 0 };
+    assert.equal(dayStatus(summary, today), day === today ? 'incomplete' : 'routine');
+    assert.equal(dayStatus({ ...summary, ordinary_incomplete_count: 1 }, today), 'incomplete');
+    assert.equal(dayStatus({ ...summary, incomplete_count: 0 }, today), 'complete');
+    assert.equal(dayStatus({ ...summary, task_count: 0 }, today), 'noTasks');
+  }
+  const routine = { task_date: '2026-10-28', task_count: '1', incomplete_count: '1', ordinary_incomplete_count: '0' };
+  assert.equal(dayStatus(routine, '2026-10-27'), 'routine');
+  assert.equal(dayStatus(routine, today), 'incomplete');
+  assert.equal(dayStatus(routine, '2026-10-29'), 'routine');
+  assert.equal(dayStatus({ ...routine, incomplete_count: 0, missed_count: 1 }, today), 'missed');
+  assert.equal(dayStatus({ ...routine, incomplete_count: 0, missed_count: 1 }, '2026-10-29'), 'missed');
+  assert.equal(dayStatus({ ...routine, incomplete_count: 0, missed_count: 0 }, today), 'complete');
+  // Older servers without the additive metadata keep their existing indicators.
+  assert.equal(dayStatus({ task_date: '2026-10-27', task_count: 1, incomplete_count: 1 }, today), 'incomplete');
+});
+
+test("completed non-routine plans remain green despite missed or future routines", async () => {
+  const { dayStatus } = await loadCalendarTools();
+  const today = '2026-10-31';
+  const october28 = {task_date:'2026-10-28', task_count:15, ordinary_task_count:1,
+    ordinary_incomplete_count:0, incomplete_count:0, missed_count:10};
+  assert.equal(dayStatus(october28, today), 'complete');
+  assert.equal(dayStatus({...october28, ordinary_incomplete_count:1, incomplete_count:1}, today), 'incomplete');
+  assert.equal(dayStatus({...october28, ordinary_task_count:0}, today), 'missed');
+  assert.equal(dayStatus({...october28, task_count:0, ordinary_task_count:0}, today), 'noTasks');
+  assert.equal(dayStatus({...october28, task_date:'2026-11-01', incomplete_count:14, missed_count:0}, today), 'complete');
+  assert.equal(dayStatus({...october28, task_date:today, incomplete_count:14, missed_count:0}, today), 'incomplete');
+  assert.equal(dayStatus({...october28, task_date:today}, today), 'complete');
+  assert.equal(dayStatus({...october28, ordinary_task_count:'1', ordinary_incomplete_count:'0'}, today), 'complete');
+});

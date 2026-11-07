@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark"><meta name="theme-color" content="#28553f">
+  <title>Taskline — الحساب</title>
+  <link rel="stylesheet" href="/account.css?v=1">
+  <script src="/account-page.js?v=4" defer></script>
+</head>
+<body>
+  <header><a href="/">✓ Taskline</a><span>الحساب / Account</span></header>
+  <main>
+    <p id="account-status" role="status" aria-live="polite">جارٍ التحميل…</p>
+    <section id="sign-in" hidden>
+      <h1 id="auth-title">تسجيل الدخول / Sign in</h1>
+      <p>بياناتك محفوظة على جهاز Taskline المحلي.</p>
+      <form id="auth-form">
+        <label>البريد الإلكتروني / Email<input name="email" type="email" autocomplete="username" required maxlength="254" dir="ltr"></label>
+        <label>كلمة المرور / Password<input name="password" type="password" autocomplete="current-password" required maxlength="256" dir="ltr"></label>
+        <label id="setup-token-label" hidden>رمز تفعيل المالك / Owner activation token<input name="setup_token" type="password" autocomplete="off" dir="ltr"></label>
+        <p id="password-help" hidden>استخدم 6 أحرف على الأقل. لا توجد مراسلة بريدية أو خدمة خارجية.</p>
+        <button type="submit">متابعة / Continue</button>
+      </form>
+      <button id="auth-toggle" type="button" class="secondary">إنشاء حساب / Register</button>
+    </section>
+    <section id="profile" hidden>
+      <h1>الملف الشخصي / Profile</h1><p id="account-role"></p>
+      <form id="profile-form">
+        <label>الاسم الكامل / Full name<input name="full_name" required maxlength="120" autocomplete="name"></label>
+        <label>الاسم المستعار / Nickname<input name="nickname" required maxlength="60" autocomplete="nickname"></label>
+        <label>البريد الإلكتروني / Email<input name="email" type="email" required autocomplete="username" dir="ltr"></label>
+        <div class="fields">
+          <label>اللغة / Language<select name="language"><option value="ar">العربية</option><option value="en">English</option></select></label>
+          <label>المظهر / Theme<select name="theme"><option value="system">حسب الجهاز / System</option><option value="light">فاتح / Light</option><option value="dark">داكن / Dark</option></select></label>
+        </div>
+        <label>كلمة المرور الحالية (لتغيير البريد أو كلمة المرور)<input name="current_password" type="password" autocomplete="current-password" dir="ltr"></label>
+        <label>كلمة مرور جديدة (اختياري)<input name="new_password" type="password" minlength="6" maxlength="256" autocomplete="new-password" dir="ltr"></label>
+        <button type="submit">حفظ الملف الشخصي / Save</button>
+      </form>
+      <nav><a href="/">العودة للتطبيق والإعدادات</a><button id="logout" class="danger">تسجيل الخروج / Logout</button></nav>
+      <h2>الجلسات / Sessions</h2><p>الجلسات تبقى مسجّلة حتى الخروج أو إلغائها أمنيًا.</p><div id="sessions"></div>
+    </section>
+    <section id="admin" hidden>
+      <h2>إدارة المستخدمين / Users</h2><div id="user-list"></div>
+      <details><summary>إضافة أو تعديل مستخدم / Add or edit user</summary>
+        <form id="user-form">
+          <input name="id" type="hidden">
+          <label>الاسم الكامل<input name="full_name" required maxlength="120"></label>
+          <label>الاسم المستعار<input name="nickname" required maxlength="60"></label>
+          <label>Email<input name="email" type="email" required dir="ltr"></label>
+          <label>كلمة المرور (مطلوبة للمستخدم الجديد)<input name="password" type="password" minlength="6" maxlength="256" autocomplete="new-password" dir="ltr"></label>
+          <div class="fields"><label>الصلاحية<select name="role"><option>User</option><option>Admin</option></select></label><label>الحالة<select name="active"><option value="true">نشط</option><option value="false">معطّل</option></select></label></div>
+          <button type="submit">حفظ المستخدم</button><button id="clear-user" type="button" class="secondary">إضافة مستخدم جديد</button>
+        </form>
+      </details>
+      <h2>النسخ الاحتياطية المحلية / Backups</h2>
+      <p>تشمل جميع الحسابات والمرفقات. الاستعادة تعيد بيانات النسخة المختارة وتلغي الجلسات، وتحتفظ تلقائيًا بنسخة من الوضع الحالي.</p>
+      <button id="create-backup">إنشاء نسخة الآن</button><div id="backup-list"></div>
+    </section>
+  </main>
+</body>
+</html>

@@ -48,3 +48,13 @@ __pycache__/
 # local Codex attachments and database backups
 .codex-remote-attachments/
 tasks-backup-*.db
+
+# All runtime account data, SQLite journals, uploads and local backup artifacts.
+*.db
+*.db-*
+*.sqlite*
+/uploads/
+/private-data/
+/backups/
+*setup-code*
+*.tar.gz

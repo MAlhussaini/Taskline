@@ -1,0 +1,11 @@
+[Unit]
+Description=Taskline local backup every six hours
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:00:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=taskline-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -9,6 +9,17 @@ const order = context.TasklineOrder;
 const task = (id, values = {}) => ({ id, completed: 0, starred: 0, parent_id: null, ...values });
 const ids = rows => Array.from(rows, row => row.id);
 
+test('optional sorting never changes saved order or separates families', () => {
+  const rows = [task(1, { completed: 1 }), task(2), task(3, { starred: 1 }), task(4, { parent_id: 2, starred: 2 })];
+  assert.deepEqual(ids(order.order(rows, { prioritySort: false, completedLast: false })), [1, 2, 4, 3]);
+  assert.deepEqual(ids(order.order(rows, { prioritySort: false })), [2, 4, 3, 1]);
+  assert.deepEqual(ids(order.order(rows, { taskOfDay: false })), [2, 4, 3, 1]);
+  const off = { prioritySort: false, completedLast: false };
+  const moved = order.reorder(rows, [3, 1, 2, 4], off);
+  assert.deepEqual(ids(order.order(moved, off)), [3, 1, 2, 4]);
+  assert.deepEqual(ids(rows), [1, 2, 3, 4]);
+});
+
 test('reunites interleaved completed families without mutating saved positions', () => {
   const rows = [task(1, { completed: 1 }), task(2, { completed: 1 }), task(3, { parent_id: 1, completed: 1 }), task(4, { parent_id: 1, completed: 1 })];
   assert.deepEqual(ids(order.order(rows)), [1, 3, 4, 2]);
@@ -57,4 +68,31 @@ test('manual reorder moves families and siblings without baking priority into sa
   assert.deepEqual(ids(order.order(moved)), [3, 4, 6, 5, 1, 2]);
   moved.find(row => row.id === 3).starred = 0;
   assert.deepEqual(ids(order.order(moved)), [4, 6, 5, 3, 1, 2]);
+});
+
+test('successful completion comes before cancelled families, with stable saved order', () => {
+  const rows = [task(1, { completed: 1, cancelled: 1 }), task(2, { completed: 1 }),
+    task(3), task(4, { parent_id: 1, completed: 1 }), task(5, { completed: 1, cancelled: 1, routine_missed: 1 }),
+    task(6, { completed: 1 }), task(7, { parent_id: 2, completed: 1, cancelled: 1 }),
+    task(8, { starred: 1 }), task(9, { starred: 2 })];
+  const original = JSON.stringify(rows);
+  assert.deepEqual(ids(order.order(rows)), [9, 8, 3, 2, 7, 6, 1, 4, 5]);
+  assert.equal(JSON.stringify(rows), original);
+  rows[0].cancelled = 0;
+  assert.deepEqual(ids(order.order(rows)), [9, 8, 3, 1, 4, 2, 7, 6, 5]);
+  rows[0].completed = 0;
+  assert.deepEqual(ids(order.order(rows)), [9, 8, 1, 4, 3, 2, 7, 6, 5]);
+  const off = {prioritySort:false, completedLast:false};
+  assert.deepEqual(ids(order.order(rows, off)), [1, 4, 2, 7, 3, 5, 6, 8, 9]);
+});
+
+test('cancelled families have their own reorder slots and retain them on success', () => {
+  const rows = [task(1, {completed:1, cancelled:1}), task(2), task(3, {completed:1}),
+    task(4, {completed:1, cancelled:1}), task(5, {parent_id:4, completed:1, cancelled:1})];
+  const reordered = order.reorder(rows, [2, 3, 4, 5, 1]);
+  assert.deepEqual(ids(reordered), [4, 5, 2, 3, 1]);
+  assert.deepEqual(ids(order.order(reordered)), [2, 3, 4, 5, 1]);
+  reordered.find(row => row.id === 4).cancelled = 0;
+  assert.deepEqual(ids(order.order(reordered)), [2, 4, 5, 3, 1]);
+  assert.deepEqual(ids(rows), [1, 2, 3, 4, 5]);
 });

@@ -1,10 +1,19 @@
-const SHELL_CACHE = 'taskline-shell-v9';
+const SHELL_CACHE = 'taskline-shell-v27';
 const APP_SHELL = [
   '/',
-  '/styles.css?v=15',
-  '/task-order.js?v=2',
-  '/calendar-utils.js?v=1',
-  '/app.js?v=15',
+  '/storage.js?v=1',
+  '/auth.js?v=1',
+  '/account.html',
+  '/account.css?v=1',
+  '/account-page.js?v=4',
+  '/styles.css?v=22',
+  '/theme.js?v=3',
+  '/theme.css?v=4',
+  '/settings.css?v=1',
+  '/settings.js?v=3',
+  '/task-order.js?v=4',
+  '/calendar-utils.js?v=4',
+  '/app.js?v=30',
   '/manifest.webmanifest',
   '/icon-192.png',
   '/icon-512.png',
@@ -39,13 +48,13 @@ self.addEventListener('fetch', event => {
       (async () => {
         try {
           const response = await fetch(request);
-          if (response.ok) {
+          if (response.ok && url.pathname === '/') {
             const cache = await caches.open(SHELL_CACHE);
             await cache.put('/', response.clone());
           }
           return response;
         } catch {
-          return caches.match('/');
+          return caches.match(url.pathname === '/account.html' ? '/account.html' : '/');
         }
       })(),
     );

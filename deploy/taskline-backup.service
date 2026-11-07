@@ -1,0 +1,14 @@
+[Unit]
+Description=Verified local backup of Taskline accounts and data
+After=taskline.service
+
+[Service]
+Type=oneshot
+User=core
+Group=core
+WorkingDirectory=/home/core/Desktop/Taskline
+EnvironmentFile=/home/core/.config/taskline/server.env
+ExecStart=/usr/bin/python3 /home/core/Desktop/Taskline/local_backup.py create
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

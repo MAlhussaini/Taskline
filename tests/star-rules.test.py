@@ -7,10 +7,14 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+import sys
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from accounts import COOKIE, password_hash
+TEST_PASSWORD_HASH = password_hash('fixture-password-for-tests')
 spec = importlib.util.spec_from_file_location("taskline_stars", ROOT / "app.py")
 app = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(app)
@@ -22,6 +26,10 @@ class StarRules(unittest.TestCase):
         app.DB_PATH = Path(self.temporary.name) / "test.db"
         app.UPLOAD_DIR = Path(self.temporary.name) / "uploads"
         app.initialize_database()
+        store = app.initialize_accounts('owner@example.test', Path(self.temporary.name) / 'state', Path(self.temporary.name) / 'backups')
+        with store.connect() as db:
+            db.execute('UPDATE auth_users SET password_hash=? WHERE is_owner=1', (TEST_PASSWORD_HASH,))
+        self.cookie = COOKIE + '=' + store.issue_session(1, 'Regression tests')
 
         class QuietHandler(app.TodoHandler):
             def log_message(self, *args):
@@ -43,7 +51,7 @@ class StarRules(unittest.TestCase):
         req = urllib.request.Request(
             f"{self.origin}{path}{separator}workspace={workspace}",
             data=json.dumps(payload).encode() if payload is not None else None,
-            headers={"Content-Type": "application/json"}, method=method,
+            headers={"Content-Type": "application/json", "Cookie": self.cookie}, method=method,
         )
         try:
             response = urllib.request.urlopen(req, timeout=10)
