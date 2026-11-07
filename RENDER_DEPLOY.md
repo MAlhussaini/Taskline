@@ -2,7 +2,7 @@
 
 This deployment creates a separate, publicly reachable instance; it does not synchronize with the existing Tailscale instance. Do not expose an unactivated owner account using the old code. Deploy only from a private repository after reviewing its history for private data. Render's persistent disk is accessible to a single runtime instance, not build jobs, cron jobs, or one-off jobs. Deployment with a disk briefly interrupts service.
 
-- Python native runtime; `.python-version` pins the tested local version 3.11.2.
+- Python native runtime; `.python-version` pins Python 3.11.11 for Render; the existing local service uses Python 3.11.2.
 - Build: `pip install -r requirements.txt` (the runtime uses Python's standard library).
 - Start: `TASKLINE_HOST=0.0.0.0 TASKLINE_PORT=$PORT python app.py`.
 - Attach a persistent disk at `/var/data`; set `TASKLINE_DATA_DIR=/var/data` and `TASKLINE_OWNER_EMAIL` to the owner email. Set `TASKLINE_SETUP_TOKEN` to a unique random secret of at least 32 characters, generated using `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. Set secrets directly in Render Environment, never in Git. `RENDER=true` is supplied by Render.
