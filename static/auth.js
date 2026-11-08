@@ -1,10 +1,10 @@
-/* Load the existing app only after local session validation. */
-(async () => {
+/* Validate the session while the public interface loads in parallel. */
+window.TasklineSession = (async () => {
   try {
     const response = await fetch('/api/auth/status', {cache:'no-store'});
     if (!response.ok) throw new Error('تعذر الاتصال بالخادم المحلي. أعد المحاولة.');
     const status = await response.json();
-    if (!status.user) { location.replace('/account.html'); return; }
+    if (!status.user) { location.replace('/account.html'); return false; }
     window.TasklineAccount = status.user;
     TasklineStorage.use(status.user);
     let preferenceWrites = Promise.resolve();
@@ -29,12 +29,10 @@
       if (url.origin === location.origin && (result.status === 401 || result.status === 409)) location.replace('/account.html');
       return result;
     };
-    const script = document.createElement('script');
-    script.src = '/app.js?v=30';
-    script.onload = () => document.documentElement.classList.remove('auth-pending');
-    document.body.appendChild(script);
+    return true;
   } catch (error) {
-    document.getElementById('auth-loading').textContent = error.message;
+    window.TasklineStartupError = error.message;
+    return false;
   }
 })();
 window.addEventListener('storage', event => { if (event.key === 'taskline-session-change') location.reload(); });

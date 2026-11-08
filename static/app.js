@@ -167,11 +167,13 @@ function refreshInstallButton() {
 
 function setupPwa() {
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
+    const register = () => {
       navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
         .then(registration => registration.update())
         .catch(() => {});
-    });
+    };
+    if (document.readyState === 'complete') register();
+    else window.addEventListener('load', register, { once: true });
   }
 
   window.addEventListener('beforeinstallprompt', event => {
@@ -218,7 +220,7 @@ function applyWorkspace() {
   TasklineTheme.setWorkspace(workspace);
 }
 
-function applyLanguage() {
+function applyLanguage({ loadData = true } = {}) {
   const arabic = language === 'ar';
   const locale = arabic ? 'ar' : 'en';
   document.documentElement.lang = arabic ? 'ar' : 'en';
@@ -342,7 +344,7 @@ function applyLanguage() {
   [...routineYearMonth.options].forEach((option, index) => { option.textContent = new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2026, index, 1)); });
   routineMonthDay.options[routineMonthDay.options.length - 1].textContent = arabic ? 'آخر يوم' : 'Last day';
   [planningMonth, editPlanMonth].forEach(select => [...select.options].slice(1).forEach((option, index) => { option.textContent = new Intl.DateTimeFormat(locale, { month: 'short' }).format(new Date(2026, index, 1)); }));
-  renderCalendar(); render(); renderLabelSuggestions(); loadOverdue();
+  renderCalendar(); render(); renderLabelSuggestions(); if (loadData) loadOverdue();
   if (currentView === 'routines') { renderRoutines(); if (!routineStats.hidden) loadRoutineStats(); }
   if (currentView === 'lists') renderLists();
   if (inboxSubView === 'dreams') loadDreams();
@@ -550,6 +552,7 @@ function renderCalendar() {
 }
 
 async function api(path, options = {}) {
+  if (!await window.TasklineSession) throw new Error('Session unavailable');
   const separator = path.includes('?') ? '&' : '?';
   const scopedPath = path.startsWith('/api/') ? `${path}${separator}workspace=${encodeURIComponent(workspace)}&timezone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}` : path;
   const response = await fetch(scopedPath, { headers: { 'Content-Type': 'application/json' }, ...options });
@@ -714,12 +717,16 @@ async function saveOrder(message) {
   }
 }
 
-async function loadTasks() {
+async function loadTasks({ initial = false } = {}) {
   try {
     const query = currentView === 'inbox' ? 'location=inbox' : `location=day&date=${currentDate}`;
     tasks = await api(`/api/tasks?${query}`); render();
   }
-  catch { error.textContent = 'Could not load your tasks. Please refresh.'; }
+  catch {
+    const message = language === 'ar' ? 'تعذر تحميل المهام. تحقق من الاتصال ثم أعد المحاولة.' : 'Could not load your tasks. Please retry.';
+    if (initial) throw new Error(message);
+    error.textContent = message;
+  }
 }
 
 async function loadActiveDays(through = TasklineCalendar.statusThrough(currentDate)) {
@@ -2015,19 +2022,19 @@ routineChart.addEventListener('click', event => {
 });
 window.addEventListener('resize', () => { if (currentView === 'routines' && !routineStats.hidden) loadRoutineStats(); });
 document.addEventListener('visibilitychange', async () => {
-  if (!document.hidden && syncLocalToday()) {
+  if (window.tasklineReady && !document.hidden && syncLocalToday()) {
     renderCalendar();
     await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
   }
 });
 setInterval(async () => {
-  if (syncLocalToday()) {
+  if (window.tasklineReady && syncLocalToday()) {
     renderCalendar();
     await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
   }
 }, 60_000);
 
-async function applyFeatureSettings() {
+async function applyFeatureSettings({ loadData = true } = {}) {
   TasklineSettings.catalog.forEach(feature => document.documentElement.classList.toggle(`without-${feature.id}`, !featureEnabled(feature.id)));
   let contextChanged = false;
   if (!featureEnabled('workspaces') && workspace === 'work') {
@@ -2048,21 +2055,41 @@ async function applyFeatureSettings() {
   applyWorkspace();
   if (!TasklineSettings.available(currentView)) await setView('day');
   else if (currentView === 'inbox') await setInboxSubView(inboxSubView);
-  if (contextChanged) await Promise.all([loadTasks(), loadActiveDays()]);
+  if (contextChanged && loadData) await Promise.all([loadTasks(), loadActiveDays()]);
   render(); renderCalendar();
   if (currentView === 'lists') renderLists();
-  await loadOverdue();
+  if (loadData) await loadOverdue();
   TasklineSettings.renderFooter();
 }
 
-TasklineSettings.init();
+// Paint the public shell in the saved language/layout without waiting for the network.
+// Controls remain inert and no task content is cached or shown before validation.
+applyFeatureSettings({ loadData: false });
+resetRoutineForm();
+applyLanguage({ loadData: false });
+document.documentElement.classList.remove('shell-pending');
+setupPwa();
 (async () => {
-  await TasklineSettings.load();
-  await applyFeatureSettings();
-  resetRoutineForm();
-  renderCalendar();
-  setupPwa();
-  applyLanguage();
-  await Promise.all([loadTasks(), loadActiveDays(), loadOverdue()]);
-  window.tasklineReady = true;
+  try {
+    if (!await window.TasklineSession) {
+      if (window.TasklineStartupError) throw new Error(window.TasklineStartupError);
+      return; // Redirecting to sign in.
+    }
+    // The confirmed account can differ from the last account on this browser.
+    language = TasklineStorage.getItem('taskline-language') || 'en';
+    workspace = TasklineStorage.getItem('taskline-workspace') === 'work' ? 'work' : 'personal';
+    await TasklineSettings.load({ initial: true });
+    await applyFeatureSettings({ loadData: false });
+    applyLanguage({ loadData: false });
+    await Promise.all([loadTasks({ initial: true }), loadActiveDays(), loadOverdue()]);
+    document.documentElement.classList.remove('data-pending');
+    document.querySelectorAll('.app-header, .shell, .bottom-nav').forEach(element => { element.inert = false; });
+    document.querySelector('.shell').setAttribute('aria-busy', 'false');
+    TasklineSettings.init();
+    window.tasklineReady = true;
+  } catch (error) {
+    const banner = document.getElementById('startup-error');
+    banner.querySelector('span').textContent = error.message;
+    banner.hidden = false;
+  }
 })();

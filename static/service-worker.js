@@ -1,19 +1,19 @@
-const SHELL_CACHE = 'taskline-shell-v27';
+const SHELL_CACHE = 'taskline-shell-v28';
 const APP_SHELL = [
   '/',
   '/storage.js?v=1',
-  '/auth.js?v=1',
+  '/auth.js?v=2',
   '/account.html',
   '/account.css?v=1',
   '/account-page.js?v=4',
-  '/styles.css?v=22',
+  '/styles.css?v=23',
   '/theme.js?v=3',
   '/theme.css?v=4',
   '/settings.css?v=1',
-  '/settings.js?v=3',
+  '/settings.js?v=4',
   '/task-order.js?v=4',
   '/calendar-utils.js?v=4',
-  '/app.js?v=30',
+  '/app.js?v=31',
   '/manifest.webmanifest',
   '/icon-192.png',
   '/icon-512.png',
@@ -46,6 +46,12 @@ self.addEventListener('fetch', event => {
   if (request.mode === 'navigate') {
     event.respondWith(
       (async () => {
+        // The versioned shell is public. Always validate the session via the network.
+        if (url.pathname === '/' || url.pathname === '/index.html') {
+          const cache = await caches.open(SHELL_CACHE);
+          const shell = await cache.match('/');
+          if (shell) return shell;
+        }
         try {
           const response = await fetch(request);
           if (response.ok && url.pathname === '/') {

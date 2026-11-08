@@ -25,7 +25,19 @@ def main():
         root=Path(temporary)
         app.DB_PATH=root/'tasks.db';app.UPLOAD_DIR=root/'uploads';app.initialize_database()
         store=app.initialize_accounts('owner@example.test',root/'state',root/'backups')
+        slow = {'enabled': False, 'fail': None}
+        requests = []
         class Quiet(app.TodoHandler):
+            def do_GET(self):
+                path = self.path.split('?')[0]
+                if path.startswith('/api/'):
+                    requests.append(path)
+                if slow['enabled'] and path in ('/api/auth/status', '/api/tasks'):
+                    time.sleep(1.5)
+                if path == slow['fail']:
+                    self.send_json({'error': 'Simulated connection failure'}, 503)
+                    return
+                super().do_GET()
             def log_message(self,*args):pass
         server=ThreadingHTTPServer(('127.0.0.1',0),Quiet)
         threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -98,6 +110,59 @@ def main():
             assert dev.evaluate('tasks[0].title')=='Owner private task'
             assert dev.evaluate("document.documentElement.dataset.theme")=='dark'
             assert dev.evaluate('language')=='ar'
+            # A returning account paints its public shell before a delayed session check.
+            dev.evaluate("TasklineSettings.save({footer:['lists','settings','day','inbox','routines']})")
+            wait_for(lambda: dev.evaluate("TasklineSettings.values.footer[0] === 'lists' && document.querySelector('#settings-status')?.textContent.includes('تم حفظ')"))
+            wait_for(lambda: dev.evaluate('!!navigator.serviceWorker.controller'))
+            dev.call('Emulation.setDeviceMetricsOverride',{'width':390,'height':844,'deviceScaleFactor':1,'mobile':True})
+            geometry = "JSON.stringify([...document.querySelectorAll('.app-header, .page-heading, .week-nav, #task-form, .bottom-nav button:not([hidden])')].map(el=>{const r=el.getBoundingClientRect();return [el.id,r.x,r.y,r.width,r.height]}))"
+            expected = dev.evaluate(geometry)
+            slow['enabled'] = True
+            requests.clear()
+            dev.call('Page.reload')
+            wait_for(lambda: dev.evaluate("location.pathname === '/' && !!document.documentElement && !document.documentElement.classList.contains('shell-pending') && document.documentElement.classList.contains('data-pending')"))
+            assert dev.evaluate('window.tasklineReady !== true')
+            assert dev.evaluate("getComputedStyle(document.querySelector('.app-header')).visibility") == 'visible'
+            assert dev.evaluate("document.documentElement.lang") == 'ar'
+            assert dev.evaluate("document.documentElement.dataset.theme") == 'dark'
+            assert dev.evaluate(geometry) == expected, 'Shell moved before authentication'
+            assert dev.evaluate("document.querySelector('.shell').inert")
+            assert dev.evaluate("getComputedStyle(document.querySelector('#empty-state')).display") == 'none'
+            assert dev.evaluate("getComputedStyle(document.querySelector('#task-count')).visibility") == 'hidden'
+            assert not dev.evaluate("document.body.innerText.includes('Owner private task')")
+            assert not dev.evaluate("document.body.innerText.includes('Checking your session')")
+            wait_for(lambda: dev.evaluate('window.tasklineReady === true'))
+            assert dev.evaluate(geometry) == expected, 'Shell moved after authentication/data load'
+            assert dev.evaluate('tasks[0].title') == 'Owner private task'
+            assert not dev.evaluate("document.querySelector('.shell').inert")
+            for endpoint in ('/api/auth/status','/api/settings','/api/tasks','/api/task-days','/api/tasks/overdue'):
+                assert requests.count(endpoint) == 1, (endpoint,requests)
+            dev.evaluate("caches.keys().then(async keys=>{window.cachedUrls=(await Promise.all(keys.map(async key=>(await (await caches.open(key)).keys()).map(r=>r.url)))).flat()})")
+            wait_for(lambda: dev.evaluate('Array.isArray(window.cachedUrls)'))
+            assert not any('/api/' in url or '/uploads/' in url for url in dev.evaluate('window.cachedUrls'))
+            assert not dev.evaluate("JSON.stringify(localStorage).includes('Owner private task')")
+            slow['enabled'] = False
+            # Failed session/settings/data requests expose a retry, never a false empty list.
+            for endpoint in ('/api/auth/status', '/api/settings', '/api/tasks'):
+                slow['fail'] = endpoint
+                dev.call('Page.reload')
+                wait_for(lambda: dev.evaluate("!!document.querySelector('#startup-error') && !document.querySelector('#startup-error').hidden"))
+                assert dev.evaluate('window.tasklineReady !== true')
+                assert dev.evaluate("getComputedStyle(document.querySelector('#empty-state')).display") == 'none'
+                assert dev.evaluate("document.querySelector('.shell').inert")
+                assert not dev.evaluate("document.body.innerText.includes('Owner private task')")
+            slow['fail'] = None
+            dev.call('Network.enable')
+            dev.call('Network.emulateNetworkConditions', {'offline': True, 'latency': 0, 'downloadThroughput': -1, 'uploadThroughput': -1})
+            dev.call('Page.reload')
+            wait_for(lambda: dev.evaluate("!!document.querySelector('#startup-error') && !document.querySelector('#startup-error').hidden"))
+            assert dev.evaluate("getComputedStyle(document.querySelector('.app-header')).visibility") == 'visible'
+            assert not dev.evaluate("document.body.innerText.includes('Owner private task')")
+            dev.call('Network.emulateNetworkConditions', {'offline': False, 'latency': 0, 'downloadThroughput': -1, 'uploadThroughput': -1})
+            dev.call('Network.clearBrowserCookies')
+            dev.call('Page.reload')
+            wait_for(lambda: dev.evaluate("location.pathname === '/account.html' && !!document.querySelector('#sign-in') && !document.querySelector('#sign-in').hidden"))
+            print('PASS reload: delayed authentication/data, stable Arabic/dark/custom-footer shell, one request per endpoint, no private cache, retry on failure, expired-session redirect')
             print('PASS browser: owner activation, registration, admin creation, profile, isolation, logout/login, persistent cookie across browser+server restart, four responsive widths')
         except Exception:
             if dev:

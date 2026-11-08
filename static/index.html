@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="auth-pending">
+<html lang="en" class="shell-pending data-pending">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -16,17 +16,18 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <script src="/storage.js?v=1"></script>
   <script src="/theme.js?v=3"></script>
-  <link rel="stylesheet" href="/styles.css?v=22">
+  <link rel="stylesheet" href="/styles.css?v=23">
   <link rel="stylesheet" href="/theme.css?v=4">
   <link rel="stylesheet" href="/settings.css?v=1">
   <script src="/task-order.js?v=4" defer></script>
   <script src="/calendar-utils.js?v=4" defer></script>
-  <script src="/settings.js?v=3" defer></script>
-  <script src="/auth.js?v=1" defer></script>
+  <script src="/settings.js?v=4" defer></script>
+  <script src="/auth.js?v=2" defer></script>
+  <script src="/app.js?v=31" defer></script>
 </head>
 <body>
-  <p id="auth-loading" role="status">جارٍ التحقق من الجلسة المحلية… / Checking your session…</p>
-  <header class="app-header">
+  <p id="startup-error" role="alert" hidden><span></span> <a href="/">إعادة المحاولة / Retry</a></p>
+  <header class="app-header" inert>
     <a class="brand" href="/" aria-label="Taskline home"><span>✓</span> <strong id="brand-title">Taskline</strong></a>
     <div class="header-actions">
       <button id="install-app" class="header-action install-app" type="button" aria-label="Install Taskline" title="Install Taskline" hidden>⬇</button>
@@ -41,7 +42,7 @@
     </div>
   </header>
 
-  <main class="shell">
+  <main class="shell" inert aria-busy="true">
     <p id="form-error" class="error app-error" role="alert"></p>
     <p id="task-notice" class="task-notice" role="status"></p>
     <header class="page-heading">
@@ -89,6 +90,7 @@
           <span id="task-count">0 tasks left</span>
         </div>
       </div>
+      <div id="tasks-loading" role="status"><span class="sr-only">جارٍ التحميل / Loading</span><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></div>
       <div id="empty-state" class="empty-state">
         <div class="empty-mark" aria-hidden="true">✓</div>
         <p>Your list is clear.</p>
@@ -172,7 +174,7 @@
     <section id="settings-section" class="advanced-section" aria-label="Settings"></section>
   </main>
 
-  <nav class="bottom-nav" aria-label="Main navigation">
+  <nav inert class="bottom-nav" aria-label="Main navigation">
     <button id="nav-today" type="button" class="active" aria-current="page"><span aria-hidden="true">☑</span>Today</button>
     <button id="nav-inbox" type="button"><span aria-hidden="true">📥</span>Inbox</button>
     <button id="nav-routines" type="button"><span aria-hidden="true">🔁</span>Routines</button>

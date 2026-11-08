@@ -81,7 +81,21 @@ window.TasklineSettings = (() => {
     if (focus) document.getElementById(focus)?.focus({ preventScroll: true });
   }
 
-  async function load() {
+  // Only presentation settings are cached; account data still requires a live session.
+  function restorePresentation() {
+    try {
+      const cached = JSON.parse(TasklineStorage.getItem('taskline-shell-settings'));
+      if (!cached?.settings?.features || !cached.settings.dayStart || !Array.isArray(cached.settings.footer) || !Array.isArray(cached.catalog)) return;
+      values = cached.settings;
+      catalog = cached.catalog;
+    } catch { /* Corrupt or unavailable storage uses the default shell. */ }
+  }
+  function cachePresentation() {
+    TasklineStorage.setItem('taskline-shell-settings', JSON.stringify({settings: values, catalog}));
+  }
+  restorePresentation();
+
+  async function load({ initial = false } = {}) {
     if (busy) return;
     const request = ++generation;
     try {
@@ -91,13 +105,15 @@ window.TasklineSettings = (() => {
       values = payload.settings;
       catalog = payload.catalog;
       loaded = true;
+      cachePresentation();
       if (failed) message = '';
       failed = false;
-      if (changed) await applyFeatureSettings();
+      if (changed && !initial) await applyFeatureSettings();
     } catch {
       if (request !== generation) return;
       failed = true;
       message = words('تعذر تحميل الإعدادات. تحقق من الاتصال ثم أعد المحاولة.', 'Could not load settings. Check your connection and retry.');
+      if (initial) throw new Error(message);
     }
     if (currentView === 'settings') renderSettings();
   }
@@ -113,6 +129,7 @@ window.TasklineSettings = (() => {
       const payload = await api('/api/settings', { method: 'PUT', body: JSON.stringify(patch) });
       values = payload.settings;
       catalog = payload.catalog;
+      cachePresentation();
       await applyFeatureSettings();
       message = words('تم حفظ الإعدادات.', 'Settings saved.');
     } catch {
