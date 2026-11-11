@@ -22,7 +22,7 @@ def check_settings(dev, evaluate_async, click, fits, screenshot, wait_for, app, 
 
     evaluate_async("TasklineSettings.go('settings')")
     assert dev.evaluate("currentView") == 'settings'
-    assert dev.evaluate("document.querySelectorAll('[data-feature]').length") == 24
+    assert dev.evaluate("document.querySelectorAll('[data-feature]').length") == 25
     defaults = dev.evaluate('JSON.parse(JSON.stringify(TasklineSettings.values))')
     for space in ('personal', 'work'):
         dev.evaluate(f"workspace = '{space}'; applyWorkspace()")
@@ -48,6 +48,8 @@ def check_settings(dev, evaluate_async, click, fits, screenshot, wait_for, app, 
     # Every individual switch saves and restores via actual UI controls.
     before = snapshot()
     for key in defaults['features']:
+        if key == 'debts':
+            continue  # Opt-in feature has its own finance browser checks.
         dev.evaluate("document.querySelectorAll('.settings-group').forEach(el => el.open = true)")
         click(f'#feature-{key}')
         wait_for(lambda: dev.evaluate(f"TasklineSettings.values.features.{key} === false && !document.querySelector('.settings-shared').disabled"))
@@ -135,6 +137,6 @@ def check_settings(dev, evaluate_async, click, fits, screenshot, wait_for, app, 
     click('#settings-open')
     wait_for(lambda: dev.evaluate("currentView === 'settings'"))
     evaluate_async(f'TasklineSettings.save({json.dumps(defaults)})')
-    assert dev.evaluate("TasklineSettings.catalog.every(f => TasklineSettings.enabled(f.id))")
+    assert dev.evaluate("TasklineSettings.catalog.every(f => TasklineSettings.enabled(f.id) === (f.default !== false))")
     assert dev.evaluate('window.uiErrors') == [], dev.evaluate('window.uiErrors')
     print('PASS settings: 24 switches, data preservation, dependencies, footer invariants, persistence, day boundaries, errors, minimal mode')

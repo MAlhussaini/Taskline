@@ -396,7 +396,7 @@ def main():
             dev.call("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-color-scheme", "value": "light"}]})
             assert dev.evaluate("document.documentElement.dataset.theme") == 'dark'
             dev.call("Page.reload")
-            wait_for(lambda: dev.evaluate("document.readyState === 'complete' && typeof TasklineTheme === 'object' && document.querySelector('#theme-toggle').getAttribute('aria-pressed') === 'true'"))
+            wait_for(lambda: dev.evaluate("document.readyState === 'complete' && window.tasklineReady === true && typeof TasklineTheme === 'object' && document.querySelector('#theme-toggle').getAttribute('aria-pressed') === 'true'"))
             assert dev.evaluate("document.documentElement.dataset.theme") == 'dark'
 
             def dark_surfaces(context):

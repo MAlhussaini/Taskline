@@ -21,9 +21,11 @@
   <link rel="stylesheet" href="/settings.css?v=1">
   <script src="/task-order.js?v=4" defer></script>
   <script src="/calendar-utils.js?v=4" defer></script>
-  <script src="/settings.js?v=4" defer></script>
+  <script src="/settings.js?v=5" defer></script>
+  <link rel="stylesheet" href="/debts.css?v=1">
+  <script src="/debts.js?v=1" defer></script>
   <script src="/auth.js?v=2" defer></script>
-  <script src="/app.js?v=31" defer></script>
+  <script src="/app.js?v=32" defer></script>
 </head>
 <body>
   <p id="startup-error" role="alert" hidden><span></span> <a href="/">إعادة المحاولة / Retry</a></p>
@@ -171,6 +173,7 @@
       </form>
       <div id="lists-list" class="lists-list" aria-live="polite"></div>
     </section>
+    <section id="debts-section" class="advanced-section" aria-label="Financial transactions"></section>
     <section id="settings-section" class="advanced-section" aria-label="Settings"></section>
   </main>
 
@@ -179,10 +182,13 @@
     <button id="nav-inbox" type="button"><span aria-hidden="true">📥</span>Inbox</button>
     <button id="nav-routines" type="button"><span aria-hidden="true">🔁</span>Routines</button>
     <button id="nav-lists" type="button"><span aria-hidden="true">📋</span>Lists</button>
+    <button id="nav-debts" type="button" hidden><span aria-hidden="true"><svg class="money-icon" viewBox="0 0 28 28"><rect x="2" y="4" width="21" height="14" rx="2"/><path d="M11 6v10m3-8h-4a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4H8"/><circle cx="21" cy="20" r="5"/><path d="M21 17v6m-2-4h3m-3 2h3"/></svg></span>Finances</button>
     <button id="nav-settings" type="button"><span aria-hidden="true">⚙</span>Settings</button>
     <button id="nav-dreams" type="button" hidden><span aria-hidden="true">✨</span>Dreams</button>
     <button id="nav-planned" type="button" hidden><span aria-hidden="true">🗓</span>Planned</button>
   </nav>
+  <dialog id="debt-details" class="label-dialog" aria-labelledby="debt-details-title"></dialog>
+  <dialog id="debt-editor" class="label-dialog" aria-labelledby="debt-editor-title"></dialog>
   <dialog id="subtask-dialog" class="label-dialog subtask-dialog" aria-labelledby="subtask-heading" aria-describedby="subtask-parent-title">
     <form id="subtask-form" autocomplete="off">
       <div class="dialog-heading">

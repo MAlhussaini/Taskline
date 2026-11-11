@@ -16,8 +16,9 @@ class SettingsTests(unittest.TestCase):
 
     def test_defaults_catalog_and_persistence_across_devices(self):
         result = self.request('GET', '/api/settings')
-        self.assertEqual(len(result['catalog']), 24)
-        self.assertTrue(all(result['settings']['features'].values()))
+        self.assertEqual(len(result['catalog']), 25)
+        self.assertFalse(result['settings']['features']['debts'])
+        self.assertTrue(all(value for key, value in result['settings']['features'].items() if key != 'debts'))
         self.assertEqual(result['settings']['dayStart'], {'personal': 180, 'work': 0})
         changed = self.request('PUT', '/api/settings', {'features': {'stars': False}, 'dayStart': {'work': 90}})
         self.assertFalse(changed['settings']['features']['stars'])

@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from accounts import Accounts, CURRENT_USER, protected, security_headers
 from local_backup import Backups
+import debts
 
 
 ROOT = Path(__file__).resolve().parent
@@ -47,7 +48,7 @@ def uploads_dir():
 
 
 def default_settings() -> dict:
-    return {"features": {feature["id"]: True for feature in SETTINGS_CATALOG},
+    return {"features": {feature["id"]: feature.get("default", True) for feature in SETTINGS_CATALOG},
             "dayStart": {"personal": 180, "work": 0},
             "footer": ["settings", "inbox", "day", "routines", "lists"]}
 
@@ -67,6 +68,7 @@ def update_settings(db, patch) -> dict:
     if not isinstance(patch, dict) or set(patch) - {"features", "dayStart", "footer"}:
         raise ValueError("Invalid settings fields")
     settings = read_settings(db)
+    debts_were_enabled = settings["features"]["debts"]
     for section in ("features", "dayStart"):
         if section not in patch:
             continue
@@ -81,13 +83,17 @@ def update_settings(db, patch) -> dict:
             settings[section][key] = value
     if "footer" in patch:
         footer = patch["footer"]
-        allowed = {"settings", "inbox", "day", "routines", "lists", "dreams", "planned", "none"}
+        allowed = {"settings", "inbox", "day", "routines", "lists", "dreams", "planned", "debts", "none"}
         if (not isinstance(footer, list) or len(footer) != 5
                 or any(not isinstance(item, str) or item not in allowed for item in footer)
                 or footer[2] != "day" or footer.count("day") != 1
                 or len([item for item in footer if item != "none"]) != len(set(footer) - {"none"})):
             raise ValueError("Today must stay in the center; other destinations must be unique")
         settings["footer"] = footer
+    if "footer" not in patch and settings["features"]["debts"] != debts_were_enabled:
+        old, new = ("settings", "debts") if settings["features"]["debts"] else ("debts", "settings")
+        if old in settings["footer"] and new not in settings["footer"]:
+            settings["footer"][settings["footer"].index(old)] = new
     db.execute("INSERT INTO app_settings(id, value) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value",
                (json.dumps(settings),))
     return settings
@@ -133,6 +139,7 @@ def connect() -> sqlite3.Connection:
 def initialize_database() -> None:
     uploads_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
     with connect() as db:
+        debts.initialize(db)
         db.execute("CREATE TABLE IF NOT EXISTS app_settings (id INTEGER PRIMARY KEY CHECK(id = 1), value TEXT NOT NULL)")
         db.execute(
             """
@@ -705,6 +712,8 @@ class TodoHandler(BaseHTTPRequestHandler):
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
             return
+        if debts.handle(self, "GET", path, workspace, connect, read_settings):
+            return
         if path.startswith("/uploads/"):
             directory = uploads_dir().resolve()
             file_path = (directory / path.removeprefix("/uploads/")).resolve()
@@ -941,6 +950,8 @@ class TodoHandler(BaseHTTPRequestHandler):
             timezone_name = request_timezone(parse_qs(parsed_url.query))
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
+            return
+        if debts.handle(self, "POST", path, workspace, connect, read_settings):
             return
         if path == "/api/lists":
             try:
@@ -1274,6 +1285,8 @@ class TodoHandler(BaseHTTPRequestHandler):
             timezone_name = request_timezone(parse_qs(parsed_url.query))
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
+            return
+        if debts.handle(self, "PUT", path, workspace, connect, read_settings):
             return
         checklist_match = re.fullmatch(r"/api/lists/(\d+)", path)
         if checklist_match:
@@ -1668,6 +1681,8 @@ class TodoHandler(BaseHTTPRequestHandler):
             timezone_name = request_timezone(parse_qs(parsed_url.query))
         except ValueError as error:
             self.send_json({"error": str(error)}, 400)
+            return
+        if debts.handle(self, "DELETE", path, workspace, connect, read_settings):
             return
         checklist_match = re.fullmatch(r"/api/lists/(\d+)", path)
         if checklist_match:

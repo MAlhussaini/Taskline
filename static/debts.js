@@ -1,0 +1,145 @@
+window.TasklineDebts = (() => {
+  let lists = [], busy = false, loading = false, generation = 0, loadedSpace = null;
+  let detailId = null, editing = null, message = '', failed = false;
+  const section = document.querySelector('#debts-section');
+  const details = document.querySelector('#debt-details');
+  const editor = document.querySelector('#debt-editor');
+  const w = (ar, en) => language === 'ar' ? ar : en;
+  const name = () => w('العمليات المالية', 'Finances');
+  const money = cents => `<bdi dir="ltr" class="debt-amount ${cents > 0 ? 'debt-positive' : cents < 0 ? 'debt-negative' : ''}">${cents > 0 ? '+' : cents < 0 ? '−' : ''}${new Intl.NumberFormat(language === 'ar' ? 'ar-SA' : 'en', {minimumFractionDigits: 2, maximumFractionDigits: 2}).format(Math.abs(cents) / 100)}</bdi>`;
+  const day = () => toISO(new Date());
+  const button = (action, label, listId = '', entryId = '', extra = '') => `<button type="button" data-debt-action="${action}" data-list="${listId}" data-entry="${entryId}" ${extra} ${busy || loading ? 'disabled' : ''}>${label}</button>`;
+  const entryTitle = e => e.kind === 'settlement' && e.title === 'Settlement' ? w('سداد القائمة', 'List settlement') : e.title;
+  const direction = balance => balance > 0 ? w('عليك', 'You owe') : balance < 0 ? w('لك', 'Owed to you') : w('الرصيد صفر', 'Settled balance');
+
+  function entries(list, full) {
+    const rows = list.entries.filter(e => full || e.kind !== 'settlement');
+    return rows.length ? `<ul class="debt-entries">${rows.map(e => `<li data-debt-entry="${e.id}" class="${e.kind === 'settlement' ? 'debt-settlement' : ''}">
+      <div class="debt-entry-copy"><strong>${escapeHtml(entryTitle(e))}</strong>${full ? `<small><time datetime="${e.entry_date}">${new Intl.DateTimeFormat(language === 'ar' ? 'ar-SA-u-ca-gregory' : 'en', {dateStyle: 'medium'}).format(new Date(e.entry_date + 'T12:00:00'))}</time>${e.kind === 'settlement' ? ' · ' + w('سداد', 'Settlement') : ''}</small>` : ''}</div>
+      ${money(e.amount_cents)}<div class="debt-entry-actions">${button('edit-entry', w('تعديل', 'Edit'), list.id, e.id)}${button('delete-entry', w('حذف', 'Delete'), list.id, e.id)}</div>
+    </li>`).join('')}</ul>` : `<p class="debt-empty">${w('لا توجد عمليات. أضف أول عملية لهذه الجهة.', 'No transactions yet. Add the first entry for this contact.')}</p>`;
+  }
+
+  function totals(list) {
+    return `<div class="debt-totals"><span>${w('مجموع الموجب', 'Positive total')}${money(list.positive_cents)}</span><span>${w('مجموع السالب', 'Negative total')}${money(list.negative_cents)}</span><span class="debt-net">${w('الصافي', 'Net balance')} · ${direction(list.balance_cents)}${money(list.balance_cents)}</span></div>`;
+  }
+
+  function renderDetails() {
+    const list = lists.find(l => l.id === detailId);
+    if (!list) { details.close(); detailId = null; return; }
+    details.innerHTML = `<div class="dialog-heading"><div><small>${w('تفاصيل القائمة', 'List details')}</small><h2 id="debt-details-title">${escapeHtml(list.title)}</h2></div>${button('close-details', '×', '', '', `class="dialog-close" aria-label="${w('إغلاق', 'Close')}"`)}</div>
+      <p class="debt-hint">${w('جميع العمليات والسداد مع تواريخها. تعديل السداد أو حذفه يغيّر الرصيد.', 'All transactions and settlements with their dates. Editing or deleting a settlement changes the balance.')}</p>${totals(list)}${entries(list, true)}
+      <p class="debt-status ${failed ? 'error' : ''}" role="status">${escapeHtml(message)}</p>`;
+  }
+
+  function render() {
+    if (message && !failed) message = loading ? w('جارٍ تحميل العمليات…', 'Loading transactions…') : w('تم الحفظ.', 'Saved.');
+    const owed = lists.reduce((sum, l) => sum + Math.max(0, l.balance_cents), 0);
+    const due = lists.reduce((sum, l) => sum + Math.min(0, l.balance_cents), 0);
+    section.innerHTML = `<div class="debt-toolbar"><p>${w('جهة واحدة، قائمة واضحة لكل ما لك وما عليك.', 'One contact, one clear record of what you owe and are owed.')}</p>${button('new-list', w('＋ إضافة جهة', '＋ Add contact'))}</div>
+      <p class="debt-hint">${w('الموجب (+) دين عليك، والسالب (−) مبلغ لك. استخدم عملة واحدة لكل القوائم. السداد والتواريخ يظهران في التفاصيل فقط؛ المجاميع تشمل السداد.', 'Positive (+): you owe. Negative (−): owed to you. Use one currency across all lists. Settlement entries and dates appear only in details; totals include settlements.')}</p>
+      <div class="debt-summary"><span>${w('إجمالي عليك', 'Total you owe')}${money(owed)}</span><span>${w('إجمالي لك', 'Total owed to you')}${money(due)}</span><span>${w('الصافي العام', 'Overall net')}${money(owed + due)}</span></div>
+      <p class="debt-status ${failed ? 'error' : ''}" role="${failed ? 'alert' : 'status'}">${escapeHtml(message)}</p>
+      ${failed ? button('reload', w('إعادة المحاولة', 'Retry')) : ''}
+      <div class="debt-lists">${lists.map(list => `<article class="debt-card" data-debt-list="${list.id}"><div class="debt-card-heading"><h2>${escapeHtml(list.title)}</h2>${button('details', w('التفاصيل', 'Details'), list.id)}</div>
+        ${totals(list)}${entries(list, false)}<div class="debt-actions">${button('new-entry', w('＋ عملية', '＋ Transaction'), list.id)}${button('settle', w('سداد القائمة', 'Settle list'), list.id, '', list.balance_cents === 0 ? 'disabled' : '')}${button('rename', w('تعديل الجهة', 'Rename'), list.id)}${button('clear', w('حذف جميع العمليات', 'Clear all entries'), list.id, '', !list.entries.length ? 'disabled' : '')}${button('delete-list', w('حذف القائمة', 'Delete list'), list.id)}</div></article>`).join('') || `<div class="empty-state"><div class="empty-mark" aria-hidden="true">＄</div><p>${w('ابدأ بإضافة جهة', 'Start by adding a contact')}</p><span>${w('مثل: صديقي، العمل، البقالة.', 'For example: a friend, work, or the grocery store.')}</span></div>`}</div>`;
+    if (details.open) renderDetails();
+  }
+
+  async function load() {
+    if (busy) return;
+    loading = true;
+    const request = ++generation, space = workspace;
+    if (loadedSpace !== space) { lists = []; loadedSpace = null; resetDialogs(); }
+    message = w('جارٍ تحميل العمليات…', 'Loading transactions…'); failed = false; render();
+    try {
+      const data = await api('/api/debts');
+      if (request !== generation || space !== workspace) return;
+      lists = data; loadedSpace = space; message = '';
+    } catch {
+      if (request !== generation || space !== workspace) return;
+      message = w('تعذر تحميل العمليات. تحقق من الاتصال ثم أعد المحاولة.', 'Could not load transactions. Check your connection and retry.'); failed = true;
+    }
+    loading = false;
+    render();
+  }
+
+  function resetDialogs() { details.close(); editor.close(); detailId = null; editing = null; }
+  function leave() { ++generation; loading = false; resetDialogs(); }
+
+  function openEditor(list, entry, rename = false) {
+    const isList = !list || rename;
+    editing = { listId: list?.id, entryId: entry?.id, isList, space: workspace };
+    editor.innerHTML = `<form id="debt-edit-form"><div class="dialog-heading"><h2 id="debt-editor-title">${isList ? w('الجهة', 'Contact') : entry ? w('تعديل العملية', 'Edit transaction') : w('إضافة عملية', 'Add transaction')}</h2>${button('close-editor', '×', '', '', `class="dialog-close" aria-label="${w('إغلاق', 'Close')}"`)}</div>
+      <label for="debt-title">${isList ? w('اسم الجهة', 'Contact name') : w('العملية', 'Transaction')}</label><input id="debt-title" name="title" required maxlength="280" value="${escapeHtml(isList ? list?.title || '' : entry ? entryTitle(entry) : '')}">
+      ${isList ? '' : `<label for="debt-amount">${w('المبلغ: موجب عليك، سالب لك', 'Amount: positive you owe, negative owed to you')}</label><input id="debt-amount" name="amount" type="text" inputmode="text" dir="ltr" required placeholder="+100 / -50.25" value="${entry ? (entry.amount_cents / 100).toFixed(2) : ''}"><label for="debt-date">${w('التاريخ', 'Date')}</label><input id="debt-date" name="entry_date" type="date" required value="${entry?.entry_date || day()}">`}
+      <p id="debt-editor-error" class="error" role="alert"></p><div class="dialog-actions"><button class="save-label" type="submit">${w('حفظ', 'Save')}</button>${button('close-editor', w('إلغاء', 'Cancel'))}</div></form>`;
+    editor.showModal();
+    editor.querySelector('#debt-title').focus();
+  }
+
+  async function mutate(path, method, payload) {
+    if (busy) return false;
+    busy = true;
+    const space = workspace;
+    document.querySelectorAll('#debts-section button, #debt-details button, #debt-editor button').forEach(b => b.disabled = true);
+    try {
+      const result = await api(path, {method, ...(payload ? {body: JSON.stringify(payload)} : {})});
+      if (space !== workspace) return true;
+      ++generation;
+      const id = Number(path.split('/')[3]);
+      if (result.id) lists = [result, ...lists.filter(l => l.id !== result.id)].sort((a,b) => b.id-a.id);
+      else lists = lists.filter(l => l.id !== id);
+      message = w('تم الحفظ.', 'Saved.'); failed = false;
+      return true;
+    } catch (err) {
+      message = w('تعذر الحفظ. أعد تحميل القائمة وتحقق من الاتصال. ', 'Could not save. Reload the list and check your connection. ') + err.message;
+      failed = true;
+      const target = editor.querySelector('#debt-editor-error');
+      if (editor.open && target) target.textContent = message;
+      return false;
+    } finally {
+      busy = false;
+      editor.querySelectorAll('button').forEach(b => b.disabled = false);
+      if (space === workspace) render();
+    }
+  }
+
+  async function action(event) {
+    const target = event.target.closest('[data-debt-action]');
+    if (!target || busy) return;
+    const act = target.dataset.debtAction;
+    const list = lists.find(l => l.id === Number(target.dataset.list));
+    const entry = list?.entries.find(e => e.id === Number(target.dataset.entry));
+    if (act === 'reload') return load();
+    if (act === 'close-editor') { editor.close(); return; }
+    if (act === 'close-details') { details.close(); return; }
+    if (act === 'new-list') return openEditor();
+    if (!list || loadedSpace !== workspace) return;
+    if (act === 'details') { detailId = list.id; renderDetails(); details.showModal(); return; }
+    if (act === 'rename') return openEditor(list, null, true);
+    if (act === 'new-entry' || act === 'edit-entry') return openEditor(list, entry);
+    const base = `/api/debts/${list.id}`;
+    if (act === 'settle' && list.balance_cents && confirm(w(`سداد «${list.title}» وتصفير رصيدها؟ سيبقى السداد في التفاصيل.`, `Settle “${list.title}” to zero? The settlement will remain in details.`)))
+      await mutate(base + '/settle', 'POST', {balance_cents: list.balance_cents, entry_date: day()});
+    if (act === 'clear' && confirm(w(`حذف جميع عمليات «${list.title}» بما فيها السداد والبدء من الصفر؟ لا يمكن التراجع.`, `Delete all entries including settlements in “${list.title}” and start over? This cannot be undone.`))) await mutate(base + '/entries', 'DELETE');
+    if (act === 'delete-list' && confirm(w(`حذف «${list.title}» وكل عملياتها نهائيًا؟`, `Permanently delete “${list.title}” and all its entries?`))) await mutate(base, 'DELETE');
+    if (act === 'delete-entry' && entry && confirm(w('حذف هذه العملية؟ سيعاد احتساب الرصيد.', 'Delete this entry? The balance will be recalculated.'))) await mutate(base + '/entries/' + entry.id, 'DELETE');
+  }
+  [section, details, editor].forEach(el => el.addEventListener('click', action));
+  editor.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy || !editing || editing.space !== workspace) return;
+    const payload = Object.fromEntries(new FormData(event.target));
+    payload.title = payload.title.trim();
+    if (payload.amount) payload.amount = payload.amount.trim().replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/٫/g, '.').replace(/−/g, '-');
+    if (!payload.title || !editing.isList && (!/^[+-]?\d+(\.\d{1,2})?$/.test(payload.amount) || Number(payload.amount) === 0 || Math.abs(Number(payload.amount)) > 1_000_000_000)) {
+      editor.querySelector('#debt-editor-error').textContent = w('أدخل وصفًا ومبلغًا غير صفر، بمنزلتين عشريتين كحد أقصى. مثال: +100 أو -50.25', 'Enter a description and a non-zero amount with up to two decimal places, e.g. +100 or -50.25'); return;
+    }
+    const {isList, listId, entryId} = editing;
+    const path = '/api/debts' + (listId ? '/' + listId : '') + (isList ? '' : '/entries' + (entryId ? '/' + entryId : ''));
+    if (await mutate(path, isList ? listId ? 'PUT' : 'POST' : entryId ? 'PUT' : 'POST', payload)) editor.close();
+  });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && currentView === 'debts' && !busy && !editor.open && !details.open) load(); });
+  return {name, load, render, leave};
+})();

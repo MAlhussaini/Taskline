@@ -1,4 +1,5 @@
 [
+  {"id":"debts","default":false,"group":"spaces","name":{"ar":"العمليات المالية والديون","en":"Financial transactions and debts"},"help":{"ar":"قائمة لكل جهة؛ الموجب عليك والسالب لك. السداد محفوظ في التفاصيل. تظهر بدل الإعدادات في الفوتر عند التفعيل.","en":"A ledger per contact: positive means you owe, negative means owed to you. Settlements stay in details. Replaces Settings in the footer when enabled."}},
   {"id":"inbox","group":"spaces","name":{"ar":"الحافظة","en":"Inbox"},"help":{"ar":"مساحة للمهام المستقبلية وأدوات النقل إليها.","en":"Future tasks and actions for moving tasks to Inbox."}},
   {"id":"lists","group":"spaces","name":{"ar":"القوائم","en":"Lists"},"help":{"ar":"قوائم مستقلة للمقاضي وغيرها.","en":"Independent checklists for groceries and more."}},
   {"id":"workspaces","group":"spaces","name":{"ar":"مساحة العمل","en":"Work space"},"help":{"ar":"إيقافها يعيدك للمنزل دون حذف بيانات العمل.","en":"Turning this off returns to Personal without deleting work data."}},

@@ -347,6 +347,7 @@ function applyLanguage({ loadData = true } = {}) {
   renderCalendar(); render(); renderLabelSuggestions(); if (loadData) loadOverdue();
   if (currentView === 'routines') { renderRoutines(); if (!routineStats.hidden) loadRoutineStats(); }
   if (currentView === 'lists') renderLists();
+  if (currentView === 'debts') TasklineDebts.render();
   if (inboxSubView === 'dreams') loadDreams();
   if (inboxSubView === 'history') loadHistory();
   TasklineSettings.renderFooter();
@@ -505,6 +506,11 @@ function planFromWheels(year, quarter, month) {
 function renderCalendar() {
   const locale = language === 'ar' ? 'ar' : 'en';
   document.querySelector('#simple-date').value = currentDate;
+  if (currentView === 'debts') {
+    dayTitle.textContent = TasklineDebts.name();
+    document.querySelector('.intro').textContent = language === 'ar' ? 'كل ما لك وما عليك، في مكان واحد.' : 'What you owe and are owed, in one place.';
+    return;
+  }
   if (currentView === 'settings') {
     dayTitle.textContent = t('settings');
     document.querySelector('.intro').textContent = language === 'ar' ? 'اجعل Taskline مناسبًا لطريقتك.' : 'Make Taskline fit the way you work.';
@@ -1276,6 +1282,7 @@ async function setView(view) {
   if (!TasklineSettings.available(view)) view = 'day';
   await flushStarClicks();
   document.querySelector('#task-notice').textContent = '';
+  if (view !== 'debts') TasklineDebts.leave();
   currentView = view;
   if (view !== 'inbox') inboxSubView = 'inbox';
   activeLabel = '';
@@ -1284,6 +1291,7 @@ async function setView(view) {
   document.body.classList.toggle('routines-view', view === 'routines');
   document.body.classList.toggle('lists-view', view === 'lists');
   document.body.classList.toggle('settings-view', view === 'settings');
+  document.body.classList.toggle('debts-view', view === 'debts');
   if (view !== 'inbox') document.body.classList.remove('dreams-view', 'history-view');
   navToday.classList.toggle('active', view === 'day');
   navInbox.classList.toggle('active', view === 'inbox');
@@ -1293,6 +1301,11 @@ async function setView(view) {
   TasklineSettings.renderFooter();
   input.placeholder = view === 'inbox' ? t('later') : t('add');
   renderCalendar();
+  if (view === 'debts') {
+    overdueSection.hidden = true;
+    await TasklineDebts.load();
+    return;
+  }
   if (view === 'settings') {
     overdueSection.hidden = true;
     TasklineSettings.render();
@@ -2055,9 +2068,13 @@ async function applyFeatureSettings({ loadData = true } = {}) {
   applyWorkspace();
   if (!TasklineSettings.available(currentView)) await setView('day');
   else if (currentView === 'inbox') await setInboxSubView(inboxSubView);
-  if (contextChanged && loadData) await Promise.all([loadTasks(), loadActiveDays()]);
+  if (contextChanged && loadData) {
+    await Promise.all([loadTasks(), loadActiveDays()]);
+    if (currentView === 'debts') await TasklineDebts.load();
+  }
   render(); renderCalendar();
   if (currentView === 'lists') renderLists();
+  if (currentView === 'debts') TasklineDebts.render();
   if (loadData) await loadOverdue();
   TasklineSettings.renderFooter();
 }

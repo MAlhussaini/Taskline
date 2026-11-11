@@ -1,15 +1,15 @@
 /* Shared feature preferences; appearance/language remain device preferences. */
 window.TasklineSettings = (() => {
-  let values = { features: {}, dayStart: { personal: 180, work: 0 }, footer: ['settings', 'inbox', 'day', 'routines', 'lists'] };
+  let values = { features: { debts: false }, dayStart: { personal: 180, work: 0 }, footer: ['settings', 'inbox', 'day', 'routines', 'lists'] };
   let catalog = [];
   let loaded = false;
   let busy = false;
   let message = '';
   let failed = false;
   let generation = 0;
-  const icons = { day: '☑', inbox: '📥', routines: '🔁', lists: '📋', settings: '⚙', dreams: '✨', planned: '🗓' };
+  const icons = { day: '☑', inbox: '📥', routines: '🔁', lists: '📋', settings: '⚙', dreams: '✨', planned: '🗓', debts: '💵🪙' };
   const words = (ar, en) => language === 'ar' ? ar : en;
-  const names = key => ({ day: t('today'), inbox: t('inbox'), settings: t('settings'), routines: rt('routines'), lists: lt('lists'), dreams: t('dreams'), planned: t('planned'), none: words('فارغة', 'Empty') })[key];
+  const names = key => ({ day: t('today'), inbox: t('inbox'), settings: t('settings'), routines: rt('routines'), lists: lt('lists'), dreams: t('dreams'), planned: t('planned'), debts: words('العمليات المالية', 'Finances'), none: words('فارغة', 'Empty') })[key];
   const enabled = id => {
     const feature = catalog.find(item => item.id === id);
     return values.features[id] !== false && (!feature?.requires || enabled(feature.requires));
@@ -72,9 +72,9 @@ window.TasklineSettings = (() => {
       </section>
       <section class="settings-card"><h2>${words('شريط التنقل السفلي', 'Bottom navigation')}</h2><p>${words('اختر محتوى الخانات الأربع من اليسار إلى اليمين. «اليوم» ثابت في الوسط. اختيار صفحة مستخدمة يبدّل مكانها مع الخانة الحالية، و«فارغة» يخفي الخانة. الميزة المتوقفة تُخفى دون نسيان مكانها.', 'Choose the four slots from left to right. Today is fixed in the center. Selecting an existing destination swaps slots; Empty hides a slot. Disabled features are hidden without forgetting their position.')}</p>
         <div class="footer-preview" aria-label="${words('معاينة الفوتر', 'Footer preview')}">${values.footer.map(id => `<span ${id === 'day' ? 'class="fixed-today"' : ''}>${available(id) ? `${icons[id]}<small>${names(id)}</small>` : '—'}</span>`).join('')}</div>
-        <div class="settings-fields">${[0, 1, 3, 4].map((slot, index) => field(`footer-slot-${slot}`, [words('أقصى اليسار', 'Far left'), words('يسار اليوم', 'Left of Today'), words('يمين اليوم', 'Right of Today'), words('أقصى اليمين', 'Far right')][index], `<select id="footer-slot-${slot}" data-footer-slot="${slot}">${['none', 'settings', 'inbox', 'routines', 'lists', 'dreams', 'planned'].map(id => `<option value="${id}" ${values.footer[slot] === id ? 'selected' : ''} ${id !== 'none' && !available(id) ? 'disabled' : ''}>${names(id)}${id !== 'none' && !available(id) ? words(' (متوقفة)', ' (disabled)') : ''}</option>`).join('')}</select>`)).join('')}</div>
+        <div class="settings-fields">${[0, 1, 3, 4].map((slot, index) => field(`footer-slot-${slot}`, [words('أقصى اليسار', 'Far left'), words('يسار اليوم', 'Left of Today'), words('يمين اليوم', 'Right of Today'), words('أقصى اليمين', 'Far right')][index], `<select id="footer-slot-${slot}" data-footer-slot="${slot}">${['none', 'settings', 'debts', 'inbox', 'routines', 'lists', 'dreams', 'planned'].map(id => `<option value="${id}" ${values.footer[slot] === id ? 'selected' : ''} ${id !== 'none' && !available(id) ? 'disabled' : ''}>${names(id)}${id !== 'none' && !available(id) ? words(' (متوقفة)', ' (disabled)') : ''}</option>`).join('')}</select>`)).join('')}</div>
       </section></fieldset>
-      <section class="settings-card"><h2>${words('انتقال سريع', 'Quick navigation')}</h2><p>${words('كل الصفحات المفعّلة متاحة هنا، حتى إن لم تضعها في الفوتر. زر ⚙ أعلى الشاشة يفتح الإعدادات دائمًا.', 'Every enabled page is available here, even if removed from the footer. The header ⚙ always opens Settings.')}</p><div class="settings-links">${['day', 'inbox', 'routines', 'lists', 'dreams', 'planned'].filter(available).map(id => `<button type="button" data-settings-go="${id}">${icons[id]} ${names(id)}</button>`).join('')}</div></section>
+      <section class="settings-card"><h2>${words('انتقال سريع', 'Quick navigation')}</h2><p>${words('كل الصفحات المفعّلة متاحة هنا، حتى إن لم تضعها في الفوتر. زر ⚙ أعلى الشاشة يفتح الإعدادات دائمًا.', 'Every enabled page is available here, even if removed from the footer. The header ⚙ always opens Settings.')}</p><div class="settings-links">${['day', 'inbox', 'routines', 'lists', 'debts', 'dreams', 'planned'].filter(available).map(id => `<button type="button" data-settings-go="${id}">${icons[id]} ${names(id)}</button>`).join('')}</div></section>
       <section class="settings-card settings-future"><h2>${words('التحفيز والألعاب — لاحقًا', 'Gamification — later')}</h2><p>${words('EXP وإنجازات وفتح الميزات تدريجيًا: مرحلة لاحقة اختيارية من الإعدادات. غير مفعّلة حاليًا، ولا تقفل أي ميزة لديك.', 'XP, achievements and gradual feature unlocks will be an optional later stage in Settings. Not active now; none of your features are locked.')}</p><label class="setting-switch"><span>${words('التحفيز (غير متاح بعد)', 'Gamification (not yet available)')}</span><input type="checkbox" role="switch" disabled></label></section>`;
     document.querySelector('#settings-theme').value = TasklineTheme.preference();
     document.querySelector('#settings-language').value = language;
@@ -158,7 +158,7 @@ window.TasklineSettings = (() => {
   function init() {
     document.querySelector('#settings-open').addEventListener('click', () => go('settings'));
     document.querySelector('#nav-settings').addEventListener('click', () => go('settings'));
-    ['dreams', 'planned'].forEach(id => document.getElementById(navId(id)).addEventListener('click', () => go(id)));
+    ['dreams', 'planned', 'debts'].forEach(id => document.getElementById(navId(id)).addEventListener('click', () => go(id)));
     document.querySelector('#settings-section').addEventListener('click', event => {
       const target = event.target.closest('[data-settings-go]');
       if (target) go(target.dataset.settingsGo);

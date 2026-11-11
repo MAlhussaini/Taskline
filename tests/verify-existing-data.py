@@ -12,9 +12,9 @@ sys.path.insert(0,str(ROOT))
 from local_backup import sqlite_copy
 
 
-def snapshot(path):
+def snapshot(path, tables=None):
     with sqlite3.connect(f'file:{path}?mode=ro',uri=True) as db:
-        tables=[row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'auth_%'")]
+        tables=list(tables) if tables is not None else [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'auth_%'")]
         return {name:[list(row) for row in db.execute('SELECT * FROM "'+name+'" ORDER BY rowid')] for name in tables}
 
 
@@ -28,7 +28,7 @@ def main(source):
         before=snapshot(app.DB_PATH)
         app.initialize_database()
         store=app.initialize_accounts('migration-owner@example.test',root/'state',root/'backups')
-        assert snapshot(app.DB_PATH)==before,'Existing rows changed during migration'
+        assert snapshot(app.DB_PATH, before)==before,'Existing rows changed during migration'
         with store.connect() as db:
             owner=dict(db.execute('SELECT * FROM auth_users WHERE is_owner=1').fetchone())
         assert store.user_paths(owner)[0]==app.DB_PATH
@@ -36,7 +36,7 @@ def main(source):
         with app.connect() as db:
             db.execute("UPDATE tasks SET title='Isolated restore test' WHERE id=(SELECT MIN(id) FROM tasks)")
         store.backups.restore(backup['id'])
-        assert snapshot(app.DB_PATH)==before,'Restore did not reproduce existing rows exactly'
+        assert snapshot(app.DB_PATH, before)==before,'Restore did not reproduce existing rows exactly'
         print(json.dumps({'migration':'all existing rows identical','restore':'all existing rows identical','tables':{name:len(rows) for name,rows in before.items()}},indent=2))
 
 

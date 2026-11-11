@@ -294,3 +294,14 @@
 
 - اختبارات API مستقلة `python3 tests/settings.test.py` للتحقق من القيم والحدود، وثبات «اليوم»، والحفظ المتزامن، والحفاظ على البيانات، وتطابق يوم الأرشفة مع وقت البداية المختار.
 - اختبارات المتصفح تشمل المفاتيح الـ24، والتبعيات، وتخصيص الفوتر، والبقاء في المركز، والحفظ وإعادة التحميل وفشل الاتصال، والواجهة المبسطة، مع العربية والإنجليزية والمظهرين والمساحتين وخمسة أحجام شاشة.
+
+
+## Optional financial transactions and debts
+
+Enable **Financial transactions and debts** in Settings → Optional features → Spaces and pages. The feature is off by default. Enabling it replaces the Settings footer slot with Finances when that slot is present; the header settings gear remains available. The footer editor also supports placing Finances in another slot. Disabling the feature hides it and preserves all its data.
+
+Each workspace has its own contact lists (for example a friend, work or a grocery store), with a description, signed amount and date for every transaction. Positive means money you owe; negative means money owed to you. Use one currency across all lists. Money is stored as integer cents with up to two decimal places. Cards show positive and negative totals and the net balance; the page summary calculates outstanding balances per contact.
+
+Every transaction can be edited or deleted. Dates and settlement entries appear only in list details. **Settle list** adds an opposite-signed entry that brings the current balance to zero, retains the original transactions, and includes that settlement in all totals. Repeated settlement at zero is a no-op; a stale balance requires reloading. Settlement entries can also be edited/deleted from details, which recalculates the balance. **Clear all entries** permanently removes transactions and settlements but keeps the contact at zero; **Delete list** removes the contact and its entries. Both actions require confirmation.
+
+The ledger uses the existing authenticated account store and local backups. Additive tables are initialized at startup for the owner and on first finance access for existing accounts/restored stores. No legacy task records are rewritten. Regression checks: `python3 tests/debts.test.py` and `python3 tests/debts-browser-smoke.py` (Chrome + websocket-client), using temporary databases and profiles.
