@@ -1,12 +1,13 @@
 window.TasklineDebts = (() => {
   let lists = [], busy = false, loading = false, generation = 0, loadedSpace = null;
-  let detailId = null, editing = null, message = '', failed = false;
+  let detailId = null, editing = null, settling = null, message = '', failed = false;
   const section = document.querySelector('#debts-section');
   const details = document.querySelector('#debt-details');
   const editor = document.querySelector('#debt-editor');
+  const settlement = document.querySelector('#debt-settle');
   const w = (ar, en) => language === 'ar' ? ar : en;
   const name = () => w('العمليات المالية', 'Finances');
-  const money = cents => `<bdi dir="ltr" class="debt-amount ${cents > 0 ? 'debt-positive' : cents < 0 ? 'debt-negative' : ''}">${cents > 0 ? '+' : cents < 0 ? '−' : ''}${new Intl.NumberFormat(language === 'ar' ? 'ar-SA' : 'en', {minimumFractionDigits: 2, maximumFractionDigits: 2}).format(Math.abs(cents) / 100)}</bdi>`;
+  const money = (cents, signed = true) => `<bdi dir="ltr" class="debt-amount ${signed && cents > 0 ? 'debt-positive' : signed && cents < 0 ? 'debt-negative' : ''}">${signed && cents > 0 ? '+' : signed && cents < 0 ? '−' : ''}${new Intl.NumberFormat(language === 'ar' ? 'ar-SA' : 'en', {minimumFractionDigits: 2, maximumFractionDigits: 2}).format(Math.abs(cents) / 100)}</bdi>`;
   const day = () => toISO(new Date());
   const button = (action, label, listId = '', entryId = '', extra = '') => `<button type="button" data-debt-action="${action}" data-list="${listId}" data-entry="${entryId}" ${extra} ${busy || loading ? 'disabled' : ''}>${label}</button>`;
   const entryTitle = e => e.kind === 'settlement' && e.title === 'Settlement' ? w('سداد القائمة', 'List settlement') : e.title;
@@ -29,7 +30,7 @@ window.TasklineDebts = (() => {
     if (!list) { details.close(); detailId = null; return; }
     details.innerHTML = `<div class="dialog-heading"><div><small>${w('تفاصيل القائمة', 'List details')}</small><h2 id="debt-details-title">${escapeHtml(list.title)}</h2></div>${button('close-details', '×', '', '', `class="dialog-close" aria-label="${w('إغلاق', 'Close')}"`)}</div>
       <p class="debt-hint">${w('جميع العمليات والسداد مع تواريخها. تعديل السداد أو حذفه يغيّر الرصيد.', 'All transactions and settlements with their dates. Editing or deleting a settlement changes the balance.')}</p>${totals(list)}${entries(list, true)}
-      <p class="debt-status ${failed ? 'error' : ''}" role="status">${escapeHtml(message)}</p>`;
+      <p class="debt-status ${failed ? 'error' : ''}" role="status">${escapeHtml(message)}</p><div class="debt-dialog-footer">${button('close-details', w('إغلاق التفاصيل', 'Close details'))}</div>`;
   }
 
   function render() {
@@ -42,7 +43,7 @@ window.TasklineDebts = (() => {
       <p class="debt-status ${failed ? 'error' : ''}" role="${failed ? 'alert' : 'status'}">${escapeHtml(message)}</p>
       ${failed ? button('reload', w('إعادة المحاولة', 'Retry')) : ''}
       <div class="debt-lists">${lists.map(list => `<article class="debt-card" data-debt-list="${list.id}"><div class="debt-card-heading"><h2>${escapeHtml(list.title)}</h2>${button('details', w('التفاصيل', 'Details'), list.id)}</div>
-        ${totals(list)}${entries(list, false)}<div class="debt-actions">${button('new-entry', w('＋ عملية', '＋ Transaction'), list.id)}${button('settle', w('سداد القائمة', 'Settle list'), list.id, '', list.balance_cents === 0 ? 'disabled' : '')}${button('rename', w('تعديل الجهة', 'Rename'), list.id)}${button('clear', w('حذف جميع العمليات', 'Clear all entries'), list.id, '', !list.entries.length ? 'disabled' : '')}${button('delete-list', w('حذف القائمة', 'Delete list'), list.id)}</div></article>`).join('') || `<div class="empty-state"><div class="empty-mark" aria-hidden="true">＄</div><p>${w('ابدأ بإضافة جهة', 'Start by adding a contact')}</p><span>${w('مثل: صديقي، العمل، البقالة.', 'For example: a friend, work, or the grocery store.')}</span></div>`}</div>`;
+        ${totals(list)}${entries(list, false)}<div class="debt-actions"><div class="debt-primary-actions">${button('new-entry', w('＋ عملية', '＋ Transaction'), list.id)}${button('settle', w('سداد القائمة', 'Settle list'), list.id, '', list.balance_cents === 0 ? 'disabled' : '')}</div><div class="debt-management-actions">${button('rename', w('تعديل الجهة', 'Rename'), list.id)}${button('clear', w('حذف جميع العمليات', 'Clear all entries'), list.id, '', !list.entries.length ? 'disabled' : '')}${button('delete-list', w('حذف القائمة', 'Delete list'), list.id)}</div></div></article>`).join('') || `<div class="empty-state"><div class="empty-mark" aria-hidden="true">＄</div><p>${w('ابدأ بإضافة جهة', 'Start by adding a contact')}</p><span>${w('مثل: صديقي، العمل، البقالة.', 'For example: a friend, work, or the grocery store.')}</span></div>`}</div>`;
     if (details.open) renderDetails();
   }
 
@@ -64,7 +65,7 @@ window.TasklineDebts = (() => {
     render();
   }
 
-  function resetDialogs() { details.close(); editor.close(); detailId = null; editing = null; }
+  function resetDialogs() { details.close(); editor.close(); settlement.close(); detailId = null; editing = null; settling = null; }
   function leave() { ++generation; loading = false; resetDialogs(); }
 
   function openEditor(list, entry, rename = false) {
@@ -78,11 +79,25 @@ window.TasklineDebts = (() => {
     editor.querySelector('#debt-title').focus();
   }
 
+  function openSettlement(list) {
+    const base = Math.abs(list.balance_cents);
+    // Round 15% once, to the nearest cent, with integer arithmetic.
+    const tax = Math.floor((base * 15 + 50) / 100);
+    settling = {listId: list.id, balance: list.balance_cents, space: workspace};
+    settlement.innerHTML = `<div class="dialog-heading"><div><small>${w('سداد القائمة', 'Settle list')}</small><h2 id="debt-settle-title">${escapeHtml(list.title)}</h2></div>${button('close-settle', '×', '', '', `class="dialog-close" aria-label="${w('إغلاق', 'Close')}"`)}</div>
+      <p class="debt-settle-direction">${direction(list.balance_cents)}</p>
+      <dl class="debt-payment-summary"><div><dt>${w('الإجمالي قبل الضريبة', 'Total before tax')}</dt><dd id="debt-subtotal">${money(base, false)}</dd></div><div><dt>${w('الضريبة (15٪)', 'Tax (15%)')}</dt><dd id="debt-tax">${money(tax, false)}</dd></div><div class="debt-payment-total"><dt>${w('الإجمالي شامل الضريبة', 'Total including tax')}</dt><dd id="debt-tax-total">${money(base + tax, false)}</dd></div></dl>
+      <p id="debt-settle-note" class="debt-hint">${w('الضريبة للعرض فقط ولا تضاف إلى الديون. التأكيد يصفّر الرصيد المسجّل ويحفظ السداد في التفاصيل.', 'Tax is a preview only and is not added to the ledger. Confirming clears the recorded balance and saves the settlement in details.')}</p>
+      <p id="debt-settle-error" class="error" role="alert"></p><div class="debt-primary-actions">${button('confirm-settle', w('تأكيد سداد الرصيد', 'Confirm settlement'), list.id)}${button('close-settle', w('إلغاء', 'Cancel'), '', '', 'autofocus')}</div>`;
+    settlement.showModal();
+    settlement.querySelector('[autofocus]').focus();
+  }
+
   async function mutate(path, method, payload) {
     if (busy) return false;
     busy = true;
     const space = workspace;
-    document.querySelectorAll('#debts-section button, #debt-details button, #debt-editor button').forEach(b => b.disabled = true);
+    document.querySelectorAll('#debts-section button, #debt-details button, #debt-editor button, #debt-settle button').forEach(b => b.disabled = true);
     try {
       const result = await api(path, {method, ...(payload ? {body: JSON.stringify(payload)} : {})});
       if (space !== workspace) return true;
@@ -97,10 +112,11 @@ window.TasklineDebts = (() => {
       failed = true;
       const target = editor.querySelector('#debt-editor-error');
       if (editor.open && target) target.textContent = message;
+      if (settlement.open) settlement.querySelector('#debt-settle-error').textContent = message;
       return false;
     } finally {
       busy = false;
-      editor.querySelectorAll('button').forEach(b => b.disabled = false);
+      [editor, settlement].forEach(dialog => dialog.querySelectorAll('button').forEach(b => b.disabled = false));
       if (space === workspace) render();
     }
   }
@@ -112,6 +128,13 @@ window.TasklineDebts = (() => {
     const list = lists.find(l => l.id === Number(target.dataset.list));
     const entry = list?.entries.find(e => e.id === Number(target.dataset.entry));
     if (act === 'reload') return load();
+    if (act === 'close-settle') { settlement.close(); settling = null; return; }
+    if (act === 'confirm-settle') {
+      if (!settling || settling.space !== workspace) return;
+      const snapshot = {...settling};
+      if (await mutate(`/api/debts/${snapshot.listId}/settle`, 'POST', {balance_cents: snapshot.balance, entry_date: day()})) { settlement.close(); settling = null; }
+      return;
+    }
     if (act === 'close-editor') { editor.close(); return; }
     if (act === 'close-details') { details.close(); return; }
     if (act === 'new-list') return openEditor();
@@ -120,13 +143,13 @@ window.TasklineDebts = (() => {
     if (act === 'rename') return openEditor(list, null, true);
     if (act === 'new-entry' || act === 'edit-entry') return openEditor(list, entry);
     const base = `/api/debts/${list.id}`;
-    if (act === 'settle' && list.balance_cents && confirm(w(`سداد «${list.title}» وتصفير رصيدها؟ سيبقى السداد في التفاصيل.`, `Settle “${list.title}” to zero? The settlement will remain in details.`)))
-      await mutate(base + '/settle', 'POST', {balance_cents: list.balance_cents, entry_date: day()});
+    if (act === 'settle' && list.balance_cents) return openSettlement(list);
     if (act === 'clear' && confirm(w(`حذف جميع عمليات «${list.title}» بما فيها السداد والبدء من الصفر؟ لا يمكن التراجع.`, `Delete all entries including settlements in “${list.title}” and start over? This cannot be undone.`))) await mutate(base + '/entries', 'DELETE');
     if (act === 'delete-list' && confirm(w(`حذف «${list.title}» وكل عملياتها نهائيًا؟`, `Permanently delete “${list.title}” and all its entries?`))) await mutate(base, 'DELETE');
     if (act === 'delete-entry' && entry && confirm(w('حذف هذه العملية؟ سيعاد احتساب الرصيد.', 'Delete this entry? The balance will be recalculated.'))) await mutate(base + '/entries/' + entry.id, 'DELETE');
   }
-  [section, details, editor].forEach(el => el.addEventListener('click', action));
+  [section, details, editor, settlement].forEach(el => el.addEventListener('click', action));
+  settlement.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   editor.addEventListener('submit', async event => {
     event.preventDefault();
     if (busy || !editing || editing.space !== workspace) return;
@@ -140,6 +163,6 @@ window.TasklineDebts = (() => {
     const path = '/api/debts' + (listId ? '/' + listId : '') + (isList ? '' : '/entries' + (entryId ? '/' + entryId : ''));
     if (await mutate(path, isList ? listId ? 'PUT' : 'POST' : entryId ? 'PUT' : 'POST', payload)) editor.close();
   });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && currentView === 'debts' && !busy && !editor.open && !details.open) load(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && currentView === 'debts' && !busy && !editor.open && !details.open && !settlement.open) load(); });
   return {name, load, render, leave};
 })();

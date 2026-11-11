@@ -81,7 +81,22 @@ try:
             dev.evaluate("document.querySelector('#debt-title').value='invalid'; document.querySelector('#debt-amount').value='0.001'; document.querySelector('#debt-edit-form').requestSubmit()")
             assert dev.evaluate("document.querySelector('#debt-editor').open && !!document.querySelector('#debt-editor-error').textContent")
             click('#debt-editor [data-debt-action=close-editor]')
-            confirm_action(card + ' [data-debt-action=settle]')
+            click(card + ' [data-debt-action=settle]')
+            assert dev.evaluate("document.querySelector('#debt-subtotal').textContent") == '69.90'
+            assert dev.evaluate("document.querySelector('#debt-tax').textContent") == '10.49'
+            assert dev.evaluate("document.querySelector('#debt-tax-total').textContent") == '80.39'
+            assert dev.evaluate("document.activeElement.textContent") == 'Cancel'
+            click('#debt-settle [data-debt-action=close-settle]')
+            assert len(run(f"api('/api/debts/{lid}')")['entries']) == 2
+            click(card + ' [data-debt-action=settle]')
+            # A failed write keeps the amounts visible and allows retry/cancel.
+            dev.evaluate("window.financeFetch=window.fetch; window.fetch=(url,options)=>String(url).includes('/settle') ? Promise.resolve(new Response(JSON.stringify({error:'Test offline failure'}),{status:503,headers:{'Content-Type':'application/json'}})) : financeFetch(url,options)")
+            click('#debt-settle [data-debt-action=confirm-settle]')
+            wait_for(lambda: dev.evaluate("document.querySelector('#debt-settle-error').textContent.includes('Test offline failure') && !document.querySelector('[data-debt-action=confirm-settle]').disabled"))
+            assert dev.evaluate("document.querySelector('#debt-settle').open")
+            dev.evaluate('window.fetch=window.financeFetch')
+            click('#debt-settle [data-debt-action=confirm-settle]')
+            wait_for(lambda: dev.evaluate("!document.querySelector('#debt-settle').open"))
             wait_for(lambda: dev.evaluate(f'document.querySelector(\'{card} [data-debt-action=settle]\').disabled'))
             result = run(f"api('/api/debts/{lid}')")
             assert result['balance_cents'] == 0 and len(result['entries']) == 3
@@ -93,6 +108,13 @@ try:
             save({'#debt-amount':'-60.00'})
             assert run(f"api('/api/debts/{lid}')")['balance_cents'] == 990
             click('#debt-details [data-debt-action=close-details]')
+            negative_id = next(l['id'] for l in rows if l['title'] == 'البقالة')
+            click(f'[data-debt-list="{negative_id}"] [data-debt-action=settle]')
+            assert dev.evaluate("document.querySelector('#debt-subtotal').textContent") == '40.25'
+            assert dev.evaluate("document.querySelector('#debt-tax').textContent") == '6.04'
+            assert dev.evaluate("document.querySelector('#debt-tax-total').textContent") == '46.29'
+            assert dev.evaluate("document.querySelector('.debt-settle-direction').textContent") == 'Owed to you'
+            click('#debt-settle [data-debt-action=close-settle]')
             # Layout, RTL, themes and long titles on phone, landscape, tablet and desktop.
             for theme in ('light','dark'):
                 for lang in ('ar','en'):
@@ -102,11 +124,33 @@ try:
                         assert dev.evaluate('document.documentElement.scrollWidth <= innerWidth'), (theme,lang,width)
                         click(card + ' [data-debt-action=details]')
                         assert dev.evaluate("document.querySelector('#debt-details').scrollWidth <= document.querySelector('#debt-details').clientWidth"), (theme,lang,width,'details')
+                        assert dev.evaluate("""(() => {
+                          const dialog=document.querySelector('#debt-details');
+                          const bounds=dialog.getBoundingClientRect();
+                          const heading=dialog.querySelector('.dialog-heading').getBoundingClientRect();
+                          return heading.left >= bounds.left+12 && heading.right <= bounds.right-12;
+                        })()"""), (theme,lang,width,'dialog padding')
+                        assert dev.evaluate("""[...document.querySelectorAll('#debt-details .debt-totals > span')].every(el => {
+                          const box=el.getBoundingClientRect(), amount=el.querySelector('.debt-amount').getBoundingClientRect();
+                          return Math.abs((box.left+box.right)/2-(amount.left+amount.right)/2)<2;
+                        })"""), (theme,lang,width,'aligned totals')
                         click('#debt-details [data-debt-action=close-details]')
+                        click(card + ' [data-debt-action=settle]')
+                        assert dev.evaluate("document.querySelector('#debt-settle').scrollWidth <= document.querySelector('#debt-settle').clientWidth"), (theme,lang,width,'settlement overflow')
+                        assert dev.evaluate("[...document.querySelectorAll('#debt-settle button')].every(el => el.getBoundingClientRect().height>=44)"), (theme,lang,width,'touch target')
+                        click('#debt-settle [data-debt-action=close-settle]')
             dev.evaluate("language='ar'; applyLanguage(); TasklineTheme.setPreference('light')")
             dev.call('Emulation.setDeviceMetricsOverride', {'width':390,'height':844,'deviceScaleFactor':1,'mobile':True})
             image = dev.call('Page.captureScreenshot', {'format':'png'})
             Path('/root/taskline-debts-mobile.png').write_bytes(base64.b64decode(image['data']))
+            click(card + ' [data-debt-action=details]')
+            image = dev.call('Page.captureScreenshot', {'format':'png'})
+            Path('/root/taskline-debts-details-mobile.png').write_bytes(base64.b64decode(image['data']))
+            click('#debt-details [data-debt-action=close-details]')
+            click(card + ' [data-debt-action=settle]')
+            image = dev.call('Page.captureScreenshot', {'format':'png'})
+            Path('/root/taskline-debts-tax-mobile.png').write_bytes(base64.b64decode(image['data']))
+            click('#debt-settle [data-debt-action=close-settle]')
             dev.evaluate("language='en'; applyLanguage()")
             confirm_action(card + ' [data-debt-action=clear]')
             wait_for(lambda: len(run(f"api('/api/debts/{lid}')")['entries']) == 0)

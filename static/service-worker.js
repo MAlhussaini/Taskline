@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'taskline-shell-v29';
+const SHELL_CACHE = 'taskline-shell-v30';
 const APP_SHELL = [
   '/',
   '/storage.js?v=1',
@@ -10,8 +10,8 @@ const APP_SHELL = [
   '/theme.js?v=3',
   '/theme.css?v=4',
   '/settings.css?v=1',
-  '/debts.css?v=1',
-  '/debts.js?v=1',
+  '/debts.css?v=2',
+  '/debts.js?v=2',
   '/settings.js?v=5',
   '/task-order.js?v=4',
   '/calendar-utils.js?v=4',
