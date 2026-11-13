@@ -100,6 +100,27 @@ try:
             wait_for(lambda: dev.evaluate(f'document.querySelector(\'{card} [data-debt-action=settle]\').disabled'))
             result = run(f"api('/api/debts/{lid}')")
             assert result['balance_cents'] == 0 and len(result['entries']) == 3
+            assert result['archive_count'] == 3 and result['current_count'] == 0
+            assert dev.evaluate(f"document.querySelectorAll('{card} [data-debt-entry]').length") == 0
+            assert dev.evaluate(f"[...document.querySelectorAll('{card} .debt-totals .debt-amount')].every(el=>el.textContent==='0.00')")
+            click(card + ' [data-debt-action=archive]')
+            assert dev.evaluate("document.querySelector('#debt-details [data-debt-action=show-archive]').getAttribute('aria-pressed')") == 'true'
+            assert dev.evaluate("document.querySelectorAll('#debt-details [data-debt-entry]').length") == 3
+            click('#debt-details [data-debt-action=show-current]')
+            assert dev.evaluate("document.querySelectorAll('#debt-details [data-debt-entry]').length") == 0
+            click('#debt-details [data-debt-action=close-details]')
+            # A new entry, even backdated, stays outside the archive after reload.
+            click(card + ' [data-debt-action=new-entry]')
+            save({'#debt-title':'New after settlement', '#debt-amount':'5', '#debt-date':'2020-01-01'})
+            run('TasklineDebts.load()')
+            assert dev.evaluate(f"document.querySelectorAll('{card} [data-debt-entry]').length") == 1
+            click(card + ' [data-debt-action=archive]')
+            assert dev.evaluate("document.querySelectorAll('#debt-details [data-debt-entry]').length") == 3
+            click('#debt-details [data-debt-action=show-current]')
+            assert dev.evaluate("document.querySelectorAll('#debt-details [data-debt-entry]').length") == 1
+            click('#debt-details [data-debt-action=close-details]')
+            confirm_action(card + ' [data-debt-action=delete-entry]')
+            wait_for(lambda: dev.evaluate(f"document.querySelectorAll('{card} [data-debt-entry]').length === 0"))
             assert dev.evaluate("document.querySelectorAll('#debts-section .debt-settlement').length") == 0
             click(card + ' [data-debt-action=details]')
             assert dev.evaluate("document.querySelectorAll('#debt-details time').length") == 3
@@ -107,6 +128,8 @@ try:
             click('#debt-details .debt-settlement [data-debt-action=edit-entry]')
             save({'#debt-amount':'-60.00'})
             assert run(f"api('/api/debts/{lid}')")['balance_cents'] == 990
+            assert dev.evaluate(f"document.querySelectorAll('{card} [data-debt-entry]').length") == 2
+            assert dev.evaluate("document.querySelector('#debt-details [data-debt-action=show-current]').getAttribute('aria-pressed')") == 'true'
             click('#debt-details [data-debt-action=close-details]')
             negative_id = next(l['id'] for l in rows if l['title'] == 'البقالة')
             click(f'[data-debt-list="{negative_id}"] [data-debt-action=settle]')

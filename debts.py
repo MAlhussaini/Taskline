@@ -62,6 +62,25 @@ def ledger(db, list_id):
     row['positive_cents'] = sum(e['amount_cents'] for e in row['entries'] if e['amount_cents'] > 0)
     row['negative_cents'] = sum(e['amount_cents'] for e in row['entries'] if e['amount_cents'] < 0)
     row['balance_cents'] = row['positive_cents'] + row['negative_cents']
+    # Entry IDs reflect insertion order. User-editable/backdated dates must not
+    # accidentally include a new transaction in an earlier settlement.
+    balance, archived_through = 0, 0
+    for entry in sorted(row['entries'], key=lambda item: item['id']):
+        balance += entry['amount_cents']
+        if entry['kind'] == 'settlement' and balance == 0:
+            archived_through = entry['id']
+    for entry in row['entries']:
+        entry['archived'] = entry['id'] <= archived_through
+    # Deriving the archive from the ledger supports existing settlements without
+    # rewriting records. Editing/deleting a payment that no longer settles the
+    # balance reopens the affected entries, so an unpaid amount is never hidden.
+    for name, archived in (('current', False), ('archive', True)):
+        entries = [entry for entry in row['entries'] if entry['archived'] == archived]
+        positive = sum(entry['amount_cents'] for entry in entries if entry['amount_cents'] > 0)
+        negative = sum(entry['amount_cents'] for entry in entries if entry['amount_cents'] < 0)
+        row[name + '_count'] = len(entries)
+        row[name + '_totals'] = {'positive_cents': positive, 'negative_cents': negative,
+                                'balance_cents': positive + negative}
     return row
 
 

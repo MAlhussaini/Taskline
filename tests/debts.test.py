@@ -81,6 +81,56 @@ class DebtTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT COUNT(*) FROM debt_entries WHERE list_id=?', (first,)).fetchone()[0], 0)
         self.request('GET', f'/api/debts/{first}', expected=404)
 
+    def test_settlement_archives_old_entries_and_keeps_backdated_new_entries_current(self):
+        lid = self.create()
+        self.entry(lid, '10', entry_date='2026-12-20')
+        before = self.entry(lid, '-3', entry_date='2026-12-21')
+        result = self.request('POST', f'/api/debts/{lid}/settle',
+                              {'balance_cents': 700, 'entry_date': '2026-11-13'})
+        self.assertEqual((result['archive_count'], result['current_count']), (3, 0))
+        self.assertTrue(all(e['archived'] for e in result['entries']))
+        self.assertEqual(result['current_totals'], {'positive_cents': 0, 'negative_cents': 0, 'balance_cents': 0})
+        self.assertEqual(result['archive_totals']['balance_cents'], 0)
+        result = self.entry(lid, '2', entry_date='2020-01-01')
+        self.assertEqual((result['archive_count'], result['current_count']), (3, 1))
+        self.assertEqual(result['current_totals']['positive_cents'], 200)
+        self.assertFalse(result['entries'][0]['archived'])
+        result = self.request('POST', f'/api/debts/{lid}/settle',
+                              {'balance_cents': 200, 'entry_date': '2026-11-13'})
+        self.assertEqual((result['archive_count'], result['current_count']), (5, 0))
+        # Repeated settlement is still idempotent, including after initialization/restart.
+        app.initialize_database()
+        result = self.request('POST', f'/api/debts/{lid}/settle',
+                              {'balance_cents': 0, 'entry_date': '2026-11-13'})
+        self.assertEqual(result['archive_count'], 5)
+        cleared = self.request('DELETE', f'/api/debts/{lid}/entries')
+        self.assertEqual((cleared['archive_count'], cleared['current_count']), (0, 0))
+
+    def test_historical_edits_reopen_unpaid_entries_without_hiding_a_balance(self):
+        lid = self.create()
+        original = self.entry(lid, '10')['entries'][0]
+        self.request('POST', f'/api/debts/{lid}/settle', {'balance_cents':1000, 'entry_date':'2026-11-13'})
+        result = self.request('PUT', f'/api/debts/{lid}/entries/{original["id"]}',
+                              {'title':'Changed amount', 'amount':'12', 'entry_date':'2026-11-10'})
+        self.assertEqual((result['archive_count'], result['current_count'], result['balance_cents']), (0, 2, 200))
+        self.assertEqual(result['current_totals']['balance_cents'], result['balance_cents'])
+        result = self.request('POST', f'/api/debts/{lid}/settle', {'balance_cents':200, 'entry_date':'2026-11-13'})
+        self.assertEqual((result['archive_count'], result['current_count']), (3, 0))
+        payment = max(result['entries'], key=lambda e:e['id'])
+        result = self.request('DELETE', f'/api/debts/{lid}/entries/{payment["id"]}')
+        self.assertEqual((result['archive_count'], result['current_count'], result['balance_cents']), (0, 2, 200))
+
+    def test_existing_settlements_are_archived_without_mutating_records(self):
+        lid = self.create()
+        with app.connect() as db:
+            db.execute("INSERT INTO debt_entries(list_id,title,amount_cents,entry_date) VALUES(?, 'Legacy', -700, '2026-11-01')", (lid,))
+            db.execute("INSERT INTO debt_entries(list_id,title,amount_cents,entry_date,kind) VALUES(?, 'Settlement', 700, '2026-11-02','settlement')", (lid,))
+            before = [tuple(row) for row in db.execute('SELECT * FROM debt_entries ORDER BY id')]
+        result = self.request('GET', f'/api/debts/{lid}')
+        self.assertEqual((result['archive_count'], result['current_count']), (2, 0))
+        with app.connect() as db:
+            self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM debt_entries ORDER BY id')], before)
+
     def test_validation_and_account_isolation(self):
         lid = self.create()
         for amount in [True, None, {}, 'NaN', 'Infinity', '0.001', '0', '1000000001', 'bad']:

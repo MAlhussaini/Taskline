@@ -73,3 +73,8 @@
   #debt-details,#debt-settle { padding:14px; }
   .debt-entries li { grid-template-columns:minmax(0,1fr) 92px; gap:8px; }
 }
+
+.debt-history-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin:16px 0 4px; }
+#debt-details .debt-history-tabs [aria-pressed="true"] { color:var(--on-primary,#fff); background:var(--green); border-color:var(--green); }
+.debt-archive-shortcut { display:flex; justify-content:flex-start; margin-top:12px; }
+.debt-history-panel { min-width:0; }

@@ -1,6 +1,6 @@
 window.TasklineDebts = (() => {
   let lists = [], busy = false, loading = false, generation = 0, loadedSpace = null;
-  let detailId = null, editing = null, settling = null, message = '', failed = false;
+  let detailId = null, detailMode = 'current', editing = null, settling = null, message = '', failed = false;
   const section = document.querySelector('#debts-section');
   const details = document.querySelector('#debt-details');
   const editor = document.querySelector('#debt-editor');
@@ -13,23 +13,26 @@ window.TasklineDebts = (() => {
   const entryTitle = e => e.kind === 'settlement' && e.title === 'Settlement' ? w('سداد القائمة', 'List settlement') : e.title;
   const direction = balance => balance > 0 ? w('عليك', 'You owe') : balance < 0 ? w('لك', 'Owed to you') : w('الرصيد صفر', 'Settled balance');
 
-  function entries(list, full) {
-    const rows = list.entries.filter(e => full || e.kind !== 'settlement');
+  function entries(list, full, archived = false) {
+    const rows = list.entries.filter(e => Boolean(e.archived) === archived && (full || e.kind !== 'settlement'));
     return rows.length ? `<ul class="debt-entries">${rows.map(e => `<li data-debt-entry="${e.id}" class="${e.kind === 'settlement' ? 'debt-settlement' : ''}">
       <div class="debt-entry-copy"><strong>${escapeHtml(entryTitle(e))}</strong>${full ? `<small><time datetime="${e.entry_date}">${new Intl.DateTimeFormat(language === 'ar' ? 'ar-SA-u-ca-gregory' : 'en', {dateStyle: 'medium'}).format(new Date(e.entry_date + 'T12:00:00'))}</time>${e.kind === 'settlement' ? ' · ' + w('سداد', 'Settlement') : ''}</small>` : ''}</div>
       ${money(e.amount_cents)}<div class="debt-entry-actions">${button('edit-entry', w('تعديل', 'Edit'), list.id, e.id)}${button('delete-entry', w('حذف', 'Delete'), list.id, e.id)}</div>
-    </li>`).join('')}</ul>` : `<p class="debt-empty">${w('لا توجد عمليات. أضف أول عملية لهذه الجهة.', 'No transactions yet. Add the first entry for this contact.')}</p>`;
+    </li>`).join('')}</ul>` : `<p class="debt-empty">${archived ? w('لا توجد عمليات مسدّدة في الأرشيف.', 'No settled entries in the archive.') : list.archive_count ? w('لا توجد عمليات حالية. العمليات المسدّدة محفوظة في الأرشيف.', 'No current transactions. Settled entries are saved in the archive.') : w('لا توجد عمليات حالية للعرض. يمكنك إضافة عملية أو مراجعة التفاصيل.', 'No current transactions to show. Add an entry or check details.')}</p>`;
   }
 
-  function totals(list) {
+  function totals(list, archived = false) {
+    list = (archived ? list.archive_totals : list.current_totals) || list;
     return `<div class="debt-totals"><span>${w('مجموع الموجب', 'Positive total')}${money(list.positive_cents)}</span><span>${w('مجموع السالب', 'Negative total')}${money(list.negative_cents)}</span><span class="debt-net">${w('الصافي', 'Net balance')} · ${direction(list.balance_cents)}${money(list.balance_cents)}</span></div>`;
   }
 
   function renderDetails() {
     const list = lists.find(l => l.id === detailId);
     if (!list) { details.close(); detailId = null; return; }
+    if (detailMode === 'archive' && !list.archive_count) detailMode = 'current';
+    const archived = detailMode === 'archive';
     details.innerHTML = `<div class="dialog-heading"><div><small>${w('تفاصيل القائمة', 'List details')}</small><h2 id="debt-details-title">${escapeHtml(list.title)}</h2></div>${button('close-details', '×', '', '', `class="dialog-close" aria-label="${w('إغلاق', 'Close')}"`)}</div>
-      <p class="debt-hint">${w('جميع العمليات والسداد مع تواريخها. تعديل السداد أو حذفه يغيّر الرصيد.', 'All transactions and settlements with their dates. Editing or deleting a settlement changes the balance.')}</p>${totals(list)}${entries(list, true)}
+      <p class="debt-hint">${w('العمليات المسدّدة محفوظة في الأرشيف. تعديل مبلغ سابق أو حذف سداد قد يعيد العمليات غير المسدّدة إلى القائمة الحالية.', 'Settled entries are saved in the archive. Changing a previous amount or deleting a settlement may reopen unpaid entries in the current list.')}</p><div class="debt-history-tabs" aria-label="${w('عرض العمليات', 'Transaction view')}">${button('show-current', w('الحالية', 'Current') + ` (${list.current_count || 0})`, list.id, '', `aria-pressed="${!archived}"`)}${button('show-archive', w('الأرشيف', 'Archive') + ` (${list.archive_count || 0})`, list.id, '', `aria-pressed="${archived}" ${list.archive_count ? '' : 'disabled'}`)}</div><section class="debt-history-panel" aria-label="${archived ? w('أرشيف العمليات المسدّدة', 'Settled entries archive') : w('العمليات الحالية', 'Current entries')}">${totals(list, archived)}${entries(list, true, archived)}</section>
       <p class="debt-status ${failed ? 'error' : ''}" role="status">${escapeHtml(message)}</p><div class="debt-dialog-footer">${button('close-details', w('إغلاق التفاصيل', 'Close details'))}</div>`;
   }
 
@@ -38,12 +41,12 @@ window.TasklineDebts = (() => {
     const owed = lists.reduce((sum, l) => sum + Math.max(0, l.balance_cents), 0);
     const due = lists.reduce((sum, l) => sum + Math.min(0, l.balance_cents), 0);
     section.innerHTML = `<div class="debt-toolbar"><p>${w('جهة واحدة، قائمة واضحة لكل ما لك وما عليك.', 'One contact, one clear record of what you owe and are owed.')}</p>${button('new-list', w('＋ إضافة جهة', '＋ Add contact'))}</div>
-      <p class="debt-hint">${w('الموجب (+) دين عليك، والسالب (−) مبلغ لك. استخدم عملة واحدة لكل القوائم. السداد والتواريخ يظهران في التفاصيل فقط؛ المجاميع تشمل السداد.', 'Positive (+): you owe. Negative (−): owed to you. Use one currency across all lists. Settlement entries and dates appear only in details; totals include settlements.')}</p>
+      <p class="debt-hint">${w('الموجب (+) دين عليك، والسالب (−) مبلغ لك. استخدم عملة واحدة لكل القوائم. العمليات المسدّدة في الأرشيف؛ المجاميع هنا للعمليات الحالية فقط.', 'Positive (+): you owe. Negative (−): owed to you. Use one currency across all lists. Settled entries are in the archive; these totals show current entries only.')}</p>
       <div class="debt-summary"><span>${w('إجمالي عليك', 'Total you owe')}${money(owed)}</span><span>${w('إجمالي لك', 'Total owed to you')}${money(due)}</span><span>${w('الصافي العام', 'Overall net')}${money(owed + due)}</span></div>
       <p class="debt-status ${failed ? 'error' : ''}" role="${failed ? 'alert' : 'status'}">${escapeHtml(message)}</p>
       ${failed ? button('reload', w('إعادة المحاولة', 'Retry')) : ''}
       <div class="debt-lists">${lists.map(list => `<article class="debt-card" data-debt-list="${list.id}"><div class="debt-card-heading"><h2>${escapeHtml(list.title)}</h2>${button('details', w('التفاصيل', 'Details'), list.id)}</div>
-        ${totals(list)}${entries(list, false)}<div class="debt-actions"><div class="debt-primary-actions">${button('new-entry', w('＋ عملية', '＋ Transaction'), list.id)}${button('settle', w('سداد القائمة', 'Settle list'), list.id, '', list.balance_cents === 0 ? 'disabled' : '')}</div><div class="debt-management-actions">${button('rename', w('تعديل الجهة', 'Rename'), list.id)}${button('clear', w('حذف جميع العمليات', 'Clear all entries'), list.id, '', !list.entries.length ? 'disabled' : '')}${button('delete-list', w('حذف القائمة', 'Delete list'), list.id)}</div></div></article>`).join('') || `<div class="empty-state"><div class="empty-mark" aria-hidden="true">＄</div><p>${w('ابدأ بإضافة جهة', 'Start by adding a contact')}</p><span>${w('مثل: صديقي، العمل، البقالة.', 'For example: a friend, work, or the grocery store.')}</span></div>`}</div>`;
+        ${totals(list)}${entries(list, false)}${list.archive_count ? `<div class="debt-archive-shortcut">${button('archive', w('عرض الأرشيف', 'View archive') + ` (${list.archive_count})`, list.id)}</div>` : ''}<div class="debt-actions"><div class="debt-primary-actions">${button('new-entry', w('＋ عملية', '＋ Transaction'), list.id)}${button('settle', w('سداد القائمة', 'Settle list'), list.id, '', list.balance_cents === 0 ? 'disabled' : '')}</div><div class="debt-management-actions">${button('rename', w('تعديل الجهة', 'Rename'), list.id)}${button('clear', w('حذف جميع العمليات', 'Clear all entries'), list.id, '', !list.entries.length ? 'disabled' : '')}${button('delete-list', w('حذف القائمة', 'Delete list'), list.id)}</div></div></article>`).join('') || `<div class="empty-state"><div class="empty-mark" aria-hidden="true">＄</div><p>${w('ابدأ بإضافة جهة', 'Start by adding a contact')}</p><span>${w('مثل: صديقي، العمل، البقالة.', 'For example: a friend, work, or the grocery store.')}</span></div>`}</div>`;
     if (details.open) renderDetails();
   }
 
@@ -87,7 +90,7 @@ window.TasklineDebts = (() => {
     settlement.innerHTML = `<div class="dialog-heading"><div><small>${w('سداد القائمة', 'Settle list')}</small><h2 id="debt-settle-title">${escapeHtml(list.title)}</h2></div>${button('close-settle', '×', '', '', `class="dialog-close" aria-label="${w('إغلاق', 'Close')}"`)}</div>
       <p class="debt-settle-direction">${direction(list.balance_cents)}</p>
       <dl class="debt-payment-summary"><div><dt>${w('الإجمالي قبل الضريبة', 'Total before tax')}</dt><dd id="debt-subtotal">${money(base, false)}</dd></div><div><dt>${w('الضريبة (15٪)', 'Tax (15%)')}</dt><dd id="debt-tax">${money(tax, false)}</dd></div><div class="debt-payment-total"><dt>${w('الإجمالي شامل الضريبة', 'Total including tax')}</dt><dd id="debt-tax-total">${money(base + tax, false)}</dd></div></dl>
-      <p id="debt-settle-note" class="debt-hint">${w('الضريبة للعرض فقط ولا تضاف إلى الديون. التأكيد يصفّر الرصيد المسجّل ويحفظ السداد في التفاصيل.', 'Tax is a preview only and is not added to the ledger. Confirming clears the recorded balance and saves the settlement in details.')}</p>
+      <p id="debt-settle-note" class="debt-hint">${w('الضريبة للعرض فقط ولا تضاف إلى الديون. التأكيد يصفّر الرصيد وينقل العمليات والسداد إلى الأرشيف.', 'Tax is a preview only and is not added to the ledger. Confirming clears the balance and moves the transactions and settlement to the archive.')}</p>
       <p id="debt-settle-error" class="error" role="alert"></p><div class="debt-primary-actions">${button('confirm-settle', w('تأكيد سداد الرصيد', 'Confirm settlement'), list.id)}${button('close-settle', w('إلغاء', 'Cancel'), '', '', 'autofocus')}</div>`;
     settlement.showModal();
     settlement.querySelector('[autofocus]').focus();
@@ -139,7 +142,8 @@ window.TasklineDebts = (() => {
     if (act === 'close-details') { details.close(); return; }
     if (act === 'new-list') return openEditor();
     if (!list || loadedSpace !== workspace) return;
-    if (act === 'details') { detailId = list.id; renderDetails(); details.showModal(); return; }
+    if (act === 'details' || act === 'archive') { detailId = list.id; detailMode = act === 'archive' || !list.current_count && list.archive_count ? 'archive' : 'current'; renderDetails(); details.showModal(); return; }
+    if (act === 'show-current' || act === 'show-archive') { detailMode = act === 'show-archive' ? 'archive' : 'current'; renderDetails(); details.querySelector(`[data-debt-action="${act}"]`)?.focus(); return; }
     if (act === 'rename') return openEditor(list, null, true);
     if (act === 'new-entry' || act === 'edit-entry') return openEditor(list, entry);
     const base = `/api/debts/${list.id}`;
