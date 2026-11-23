@@ -1117,6 +1117,20 @@ class TodoHandler(BaseHTTPRequestHandler):
                             "SELECT COALESCE(MAX(position), -1) + 1 FROM tasks WHERE workspace = ? AND location = ? AND (? = 'inbox' OR task_date = ?)",
                             (workspace, location, location, target_date),
                         ).fetchone()[0]
+                        if action == "today":
+                            first_routine = db.execute(
+                                """SELECT MIN(position) FROM tasks WHERE workspace = ? AND location = 'day'
+                                   AND task_date = ? AND parent_id IS NULL AND routine_occurrence_id IS NOT NULL
+                                   AND carried_from_date IS NULL AND id != ?""",
+                                (workspace, target_date, root_id),
+                            ).fetchone()[0]
+                            if first_routine is not None:
+                                next_position = first_routine
+                                db.execute(
+                                    """UPDATE tasks SET position = position + ? WHERE workspace = ?
+                                       AND location = 'day' AND task_date = ? AND position >= ?""",
+                                    (len(family), workspace, target_date, next_position),
+                                )
                         for offset, member in enumerate(family):
                             if action == "today":
                                 db.execute(

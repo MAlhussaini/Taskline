@@ -42,6 +42,32 @@ class RoutineOrderTests(unittest.TestCase):
             self.assertEqual(tasks[-1]['parent_id'], root['id'])
             self.assertEqual(len({task['position'] for task in tasks}), len(tasks))
 
+    def test_overdue_moves_before_routines_with_family_and_persists_in_each_workspace(self):
+        for space in ('personal', 'work'):
+            self.request('POST', '/api/routines', {'title': 'Routine', 'start_date': '2030-01-01',
+                         'frequency': 'daily', 'steps': ['Routine step']}, workspace=space, expected=201)
+            query = '/api/tasks?date=2030-01-02&location=day'
+            self.request('GET', query, workspace=space)
+            self.request('POST', '/api/tasks', {'title': 'Already today', 'task_date': '2030-01-02'}, workspace=space, expected=201)
+            parent = self.request('POST', '/api/tasks', {'title': 'Overdue', 'task_date': '2030-01-01'}, workspace=space, expected=201)
+            child = self.request('POST', '/api/tasks', {'title': 'Overdue step', 'parent_id': parent['id']}, workspace=space, expected=201)
+            other_space = 'work' if space == 'personal' else 'personal'
+            other_before = self.request('GET', query, workspace=other_space)
+            for title in ('Overdue', 'Another overdue'):
+                moved = parent if title == 'Overdue' else self.request('POST', '/api/tasks',
+                    {'title': title, 'task_date': '2030-01-01'}, workspace=space, expected=201)
+                self.request('POST', f"/api/tasks/{moved['id']}/overdue-action",
+                             {'action': 'today', 'target_date': '2030-01-02'}, workspace=space)
+            app.initialize_database()
+            rows = self.request('GET', query, workspace=space)
+            self.assertEqual([row['title'] for row in rows],
+                             ['Already today', 'Overdue', 'Overdue step', 'Another overdue', 'Routine', 'Routine step'])
+            self.assertEqual(len({row['position'] for row in rows}), len(rows))
+            moved_family = [row for row in rows if row['id'] in (parent['id'], child['id'])]
+            self.assertTrue(all(row['carried_from_date'] == '2030-01-01' for row in moved_family))
+            self.assertEqual(moved_family[1]['parent_id'], parent['id'])
+            self.assertEqual(self.request('GET', query, workspace=other_space), other_before)
+
     def test_future_occurrences_follow_order_without_rearranging_other_tasks(self):
         for space in ('personal', 'work'):
             with app.connect() as db:
