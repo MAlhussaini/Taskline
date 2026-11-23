@@ -1674,7 +1674,9 @@ function renderLists() {
     const emptyMessage = card.querySelector('.checklist-empty');
     emptyMessage.textContent = lt('empty');
     emptyMessage.hidden = checklist.items.length !== 0;
-    checklist.items.forEach(item => {
+    // Keep the saved order within each group, including when reopening an item.
+    const displayItems = [...checklist.items].sort((a, b) => Number(a.completed) - Number(b.completed));
+    displayItems.forEach(item => {
       const row = document.createElement('li');
       row.className = item.completed ? 'completed' : '';
       row.innerHTML = `<label><input type="checkbox"><span></span></label><span class="checklist-item-actions"><button type="button" data-item-edit aria-label="${lt('editItem')}">✏️</button><button type="button" data-item-delete aria-label="${lt('removeItem')}">×</button></span>`;
